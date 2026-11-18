@@ -18,7 +18,7 @@ import (
 // audit, S1). Keep in step with web/src/App.tsx.
 var consoleRoots = map[string]bool{
 	"": true, "login": true, "home": true, "connect": true, "access": true, "sessions": true,
-	"activity": true, "terminal": true, "desktop": true, "admin": true, "audit": true,
+	"activity": true, "terminal": true, "desktop": true, "admin": true, "audit": true, "approvals": true,
 }
 
 // isConsolePath reports whether p, already cleaned, is a page of the console.
@@ -89,5 +89,18 @@ func isFile(bundle fs.FS, name string) bool {
 // playback is a blank screen. It permits WebAssembly only, not JavaScript
 // eval, so script injection protection is unchanged. Connections stay on our
 // origin: 'self' covers its WebSocket too in every browser the bundle is
-// built for (L5).
-const uiCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+// built for (L5). form-action names, beside our origin, the hosts a cloud
+// session's console sign-in is POSTed to (ADR 0050; cloud.FederationEndpoint
+// and the console the sign-in lands in): signin.aws.amazon.com takes the
+// form, and its login answer redirects to the region's console
+// (<region>.console.aws.amazon.com, or console.aws.amazon.com without a
+// region), which Chrome checks against form-action too, redirect by redirect;
+// the wildcard signin host covers the regional sign-in hosts AWS redirects
+// through. The API's own policy (server.go) keeps form-action 'self'. Without
+// these the browser refuses the POST in silence and the person gets a blank
+// tab (review 2026-11-17, C1).
+const uiCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self' " + consoleFormHosts
+
+// consoleFormHosts are the AWS hosts the console sign-in form may be sent to
+// and redirected through; they appear in form-action and nowhere else.
+const consoleFormHosts = "https://signin.aws.amazon.com https://*.signin.aws.amazon.com https://console.aws.amazon.com https://*.console.aws.amazon.com"

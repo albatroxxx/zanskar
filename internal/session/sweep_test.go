@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -19,6 +20,247 @@ import (
 	"github.com/albatroxxx/zanskar/internal/store"
 	"github.com/albatroxxx/zanskar/internal/store/storetest"
 )
+
+// noAppend is a storage that takes no line after the close, as an object
+// store does.
+type noAppend struct{ recording.Storage }
+
+// cloudRecording starts a cloud session of the rig's user, ends it endedAgo
+// ago, and leaves its recording open with blob in storage (or, with no blob,
+// a storage address nothing is at), as a gateway that went away inside the
+// activity window leaves it (ADR 0050, phase C).
+func (rig *sweepRig) cloudRecording(t *testing.T, endedAgo time.Duration, blob []byte) (sessionID, recordingID string) {
+	t.Helper()
+	ctx := context.Background()
+	s := &Session{UserID: "u1", TargetID: "t1", Protocol: "cloud", ClientIP: "10.0.0.1"}
+	if err := rig.r.Start(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.r.End(ctx, s.ID, EndAdminTerminated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.db.ExecContext(ctx, rig.db.Rebind(`UPDATE access_sessions SET ended_at = ? WHERE id = ?`), store.TimeArg(time.Now().Add(-endedAgo)), s.ID); err != nil {
+		t.Fatal(err)
+	}
+	uri := "file://" + filepath.Join(rig.st.Dir, s.ID+"-gone.cast")
+	if blob != nil {
+		w, u, err := rig.st.Create(ctx, s.ID+".cast")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(blob); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		uri = u
+	}
+	rec := &Recording{SessionID: s.ID, Format: "asciicast", StorageURI: uri}
+	if err := rig.r.CreateRecording(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	return s.ID, rec.ID
+}
+
+// castBlob is a cloud session's recording as the run flushed it before the
+// wait: a header an hour old and the session's first line.
+// castBlob carries the moment it was made, so a test takes it once and
+// compares against that copy: taken twice across a second boundary the two
+// differ (CI, 2026-11-18).
+func castBlob() []byte {
+	return []byte(fmt.Sprintf(`{"version":2,"width":120,"height":40,"timestamp":%d}`, time.Now().Add(-time.Hour).Unix()) + "\n" +
+		`[0.5,"m","session started"]` + "\n" + `[0.5,"o","session started\r\n"]` + "\n")
+}
+
+// A cloud session's recording left open for its activity read by a gateway
+// that went away inside the window (ADR 0050, phase C): a pass finishes the
+// one whose session ended before the grace and no run holds, with the line
+// saying why written to it and its size and digest read from storage, and
+// audits the read that was not made as the system's; it leaves the one
+// ended inside the grace, the one a run still holds, and a host session's
+// lost recording alone. One whose blob is gone is lost, audited once, not
+// every minute. Startup finishes every one, whenever its session ended: the
+// process that held them is gone. A storage that takes no line after the
+// close has its recording finished all the same, the note saying so.
+func TestSweeperFinishesRecordingsAwaitingActivity(t *testing.T) {
+	storetest.ForEachBackend(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		rig := newSweepRig(t, db)
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		cast := castBlob()
+		old, oldRec := rig.cloudRecording(t, 30*time.Minute, cast)
+		young, youngRec := rig.cloudRecording(t, time.Minute, cast)
+		held, heldRec := rig.cloudRecording(t, 40*time.Minute, cast)
+		gone, goneRec := rig.cloudRecording(t, 45*time.Minute, nil)
+		// A host session ended with its recording unfinished is lost, not
+		// awaiting anything: the rig's ended ssh session gets one.
+		sshRec := &Recording{SessionID: rig.old, Format: "asciicast", StorageURI: "file://" + filepath.Join(rig.st.Dir, "ssh.cast")}
+		if err := rig.r.CreateRecording(ctx, sshRec); err != nil {
+			t.Fatal(err)
+		}
+		awaiting, err := rig.r.AwaitingRecordings(ctx, time.Now().Add(-CloudActivityGrace))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := []string{}
+		for _, a := range awaiting {
+			ids = append(ids, a.ID)
+		}
+		if strings.Join(ids, ",") != goneRec+","+heldRec+","+oldRec {
+			t.Fatalf("awaiting past the grace: %v, want gone, held, old in the order they ended", ids)
+		}
+		if all, _ := rig.r.AwaitingRecordings(ctx, time.Now()); len(all) != 4 {
+			t.Fatalf("awaiting at all: %d, want 4", len(all))
+		}
+
+		sw := &Sweeper{Repo: rig.r, Live: func(id string) bool { return id == held }, Storage: rig.st, Audit: audit.NewLog(db), Log: log}
+		sw.Pass(ctx)
+		size, sum, finished := rig.recordingState(t, oldRec)
+		if !finished || size == 0 {
+			t.Fatalf("old: %d %q finished %v", size, sum, finished)
+		}
+		rc, err := rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, old+".cast"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		blob, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		h := sha256.Sum256(blob)
+		if int64(len(blob)) != size || hex.EncodeToString(h[:]) != sum {
+			t.Fatalf("old finished with %d %q, storage holds %d %q", size, sum, len(blob), hex.EncodeToString(h[:]))
+		}
+		if !strings.HasSuffix(string(blob), `"o","activity not read: the gateway lost track of this session\r\n"]`+"\n") || !strings.Contains(string(blob), `"m","activity not read: the gateway lost track of this session"`) {
+			t.Fatalf("old's recording:\n%s", blob)
+		}
+		// Timed from the header: about an hour in.
+		rc, _ = rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, old+".cast"))
+		markers, err := recording.Markers(rc)
+		_ = rc.Close()
+		if err != nil || len(markers) != 2 || markers[1].At < 3500*time.Second || markers[1].At > 3700*time.Second {
+			t.Fatalf("markers: %+v %v", markers, err)
+		}
+		for name, id := range map[string]string{"young": youngRec, "held": heldRec, "ssh": sshRec.ID, "gone": goneRec} {
+			if _, _, finished := rig.recordingState(t, id); finished {
+				t.Errorf("%s was finished", name)
+			}
+		}
+		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, young+".cast")))); string(b) != string(cast) {
+			t.Fatalf("young's recording was touched:\n%s", b)
+		}
+		if evs := rig.events(t, audit.SessionCloudActivity, old); len(evs) != 1 || evs[0].actorIP != "system" || evs[0].details["error"] != "the gateway lost track of this session" ||
+			evs[0].details["recording_id"] != oldRec || evs[0].details["recording"] != "the line was written; finished from what storage holds" {
+			t.Fatalf("old's event: %+v", evs)
+		}
+		if evs := rig.events(t, audit.SessionCloudActivity, gone); len(evs) != 1 || !strings.HasPrefix(evs[0].details["recording"], "the line could not be written: ") || !strings.Contains(evs[0].details["recording"], "lost: ") {
+			t.Fatalf("gone's event: %+v", evs)
+		}
+		if evs := rig.events(t, audit.RecordingLost, goneRec); len(evs) != 1 || evs[0].details["session_id"] != gone {
+			t.Fatalf("gone's loss: %+v", evs)
+		}
+		for _, id := range []string{young, held, rig.old} {
+			if evs := rig.events(t, audit.SessionCloudActivity, id); len(evs) != 0 {
+				t.Errorf("%s was spoken of: %+v", id, evs)
+			}
+		}
+		// Another pass says nothing more of what it tried.
+		sw.Pass(ctx)
+		if evs := rig.events(t, audit.SessionCloudActivity, gone); len(evs) != 1 {
+			t.Fatalf("gone was audited again: %+v", evs)
+		}
+		if evs := rig.events(t, audit.RecordingLost, goneRec); len(evs) != 1 {
+			t.Fatalf("gone's loss was audited again: %+v", evs)
+		}
+
+		// A new process: everything awaiting is its sweep's, whenever ended.
+		next := &Sweeper{Repo: rig.r, Storage: noAppend{rig.st}, Audit: audit.NewLog(db), Log: log}
+		next.Startup(ctx, time.Now())
+		for name, id := range map[string]string{"young": youngRec, "held": heldRec} {
+			if _, _, finished := rig.recordingState(t, id); !finished {
+				t.Errorf("%s was not finished at startup", name)
+			}
+		}
+		if _, _, finished := rig.recordingState(t, sshRec.ID); finished {
+			t.Error("the host session's lost recording was finished")
+		}
+		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, young+".cast")))); string(b) != string(cast) {
+			t.Fatalf("a storage without Append wrote a line:\n%s", b)
+		}
+		if evs := rig.events(t, audit.SessionCloudActivity, young); len(evs) != 1 || evs[0].details["error"] != "gateway restarted" || evs[0].details["recording"] != "the storage takes no line after the close; finished from what storage holds" {
+			t.Fatalf("young's event: %+v", evs)
+		}
+		// With a storage that appends, the startup line says the gateway restarted.
+		late, lateRec := rig.cloudRecording(t, 2*time.Minute, cast)
+		(&Sweeper{Repo: rig.r, Storage: rig.st, Audit: audit.NewLog(db), Log: log}).Startup(ctx, time.Now())
+		if _, _, finished := rig.recordingState(t, lateRec); !finished {
+			t.Fatal("late was not finished at startup")
+		}
+		if b, _ := io.ReadAll(must(rig.st.Open(ctx, "file://"+filepath.Join(rig.st.Dir, late+".cast")))); !strings.Contains(string(b), `"m","activity not read: gateway restarted"`) {
+			t.Fatalf("late's recording:\n%s", b)
+		}
+	})
+}
+
+// must is the open blob, or the test's own failure through a nil reader.
+func must(rc io.ReadCloser, err error) io.ReadCloser {
+	if err != nil {
+		return io.NopCloser(strings.NewReader("open failed: " + err.Error()))
+	}
+	return rc
+}
+
+// A cloud session's recording reads recording, not lost, for the grace after
+// the session's end its last activity read may take (ADR 0050, phase C);
+// after it, lost like any other unfinished one; a host's reads lost at once.
+// Both the recording's own state and the session's recording_state say so.
+func TestRecordingStateInsideTheActivityWindow(t *testing.T) {
+	ctx := context.Background()
+	rig := newSweepRig(t, storetest.Open(t))
+	now := time.Now()
+	for _, tc := range []struct {
+		name     string
+		protocol string
+		endedAt  *time.Time
+		want     bool
+	}{
+		{"an open session", "cloud", nil, false},
+		{"a cloud session just ended", "cloud", ptr(now.Add(-time.Minute)), false},
+		{"a cloud session ended 19 minutes ago", "cloud", ptr(now.Add(-19 * time.Minute)), false},
+		{"a cloud session ended 21 minutes ago", "cloud", ptr(now.Add(-21 * time.Minute)), true},
+		{"a host session just ended", "ssh", ptr(now.Add(-time.Second)), true},
+		{"a cluster session just ended", "kube", ptr(now.Add(-time.Second)), true},
+	} {
+		if got := recordingSessionEnded(tc.protocol, tc.endedAt, now); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	cast := castBlob()
+	young, youngRec := rig.cloudRecording(t, time.Minute, cast)
+	old, oldRec := rig.cloudRecording(t, 25*time.Minute, cast)
+	sshRec := &Recording{SessionID: rig.old, Format: "asciicast", StorageURI: "file://" + filepath.Join(rig.st.Dir, "ssh.cast")}
+	if err := rig.r.CreateRecording(ctx, sshRec); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, session, recording string
+		want                     RecordingState
+	}{
+		{"inside the window", young, youngRec, RecordingWriting},
+		{"past the window", old, oldRec, RecordingLost},
+		{"a host session", rig.old, sshRec.ID, RecordingLost},
+	} {
+		rec, err := rig.r.GetRecording(ctx, tc.recording)
+		if err != nil || rec.State != tc.want {
+			t.Errorf("%s: recording state %q (%v), want %q", tc.name, rec.State, err, tc.want)
+		}
+		s, err := rig.r.Get(ctx, tc.session)
+		if err != nil || s.RecordingState != tc.want || s.State != "ended" {
+			t.Errorf("%s: session's recording_state %q (%v), want %q", tc.name, s.RecordingState, err, tc.want)
+		}
+	}
+}
+
+func ptr(t time.Time) *time.Time { return &t }
 
 // sweepRig is four sessions of one user: open and not run by the gateway,
 // open and run by it, open and not run but only just started, and ended. The

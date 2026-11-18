@@ -100,7 +100,7 @@ zanskar> session terminate 3f9a1c20
 
 People who can sign in.
 
-- `--role <role>`: admin, auditor or user
+- `--role <role>`: admin, auditor, approver or user
 
 ```
 zanskar> users --role admin
@@ -193,11 +193,12 @@ One policy in full.
 zanskar> policy show prod-db-jit
 ```
 
-### `requests [--pending]`
+### `requests [--pending] [--mine]`
 
 Access requests, newest first.
 
 - `--pending`: only requests waiting for a decision
+- `--mine`: only the requests you are named to decide, and those you decided (ADR 0049)
 
 ```
 zanskar> requests --pending

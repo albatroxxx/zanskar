@@ -123,6 +123,16 @@ type Config struct {
 	LDAP         *LDAPConfig  `json:"ldap,omitempty"`
 	DefaultRoles []user.Role  `json:"default_roles,omitempty"` // roles for JIT-provisioned users; default ["user"]
 	GroupMapping GroupMapping `json:"group_mapping,omitempty"`
+	// ApproverGroups are the external groups whose members hold the approver
+	// role (ADR 0049, 7), written as GroupMapping keys are (an OIDC claim
+	// value; an LDAP group's DN or bare name). A provider that lists any owns
+	// the role for the accounts that sign in through it: each sign-in grants
+	// approver to a member of one and withdraws it from a holder in none,
+	// as mapped groups follow each sign-in. A provider that lists none
+	// leaves roles as an administrator set them. An administrator keeps
+	// every role either way. Not applied by the directory sync or a SCIM
+	// push, which carry no groups.
+	ApproverGroups []string `json:"approver_groups,omitempty"`
 	// AutoProvision creates a Zanskar user, with DefaultRoles, the first time
 	// someone signs in through this provider and no account is theirs yet.
 	// Either way, an account an administrator created with no password under
@@ -166,7 +176,7 @@ type Provider struct {
 // no client secret, bind password or CA bundle.
 func AccessSummary(c *Config) map[string]any {
 	d := map[string]any{"auto_provision": c.AutoProvision, "default_roles": c.DefaultRoles, "group_mapping": c.GroupMapping,
-		"sync_users": c.SyncUsers, "sync_minutes": c.SyncMinutes, "scim": c.SCIM}
+		"approver_groups": orEmpty(c.ApproverGroups), "sync_users": c.SyncUsers, "sync_minutes": c.SyncMinutes, "scim": c.SCIM}
 	if c.GroupMapping == nil {
 		d["group_mapping"] = GroupMapping{}
 	}
@@ -250,6 +260,11 @@ func Validate(p *Provider, c *Config) error {
 	}
 	// Admin alone when it is there: it holds what the others hold.
 	c.DefaultRoles = user.NormalizeRoles(c.DefaultRoles)
+	groups, err := cleanApproverGroups(c.ApproverGroups)
+	if err != nil {
+		return err
+	}
+	c.ApproverGroups = groups
 	switch p.Type {
 	case TypeOIDC:
 		if c.OIDC == nil || c.LDAP != nil {
@@ -261,6 +276,12 @@ func Validate(p *Provider, c *Config) error {
 		}
 		if o.ClientID == "" || o.ClientSecret == "" {
 			return fmt.Errorf("%w: client_id and client_secret required", ErrInvalidInput)
+		}
+		// Without a groups claim no sign-in asserts a group, so approver
+		// groups would withdraw the role from everyone who signs in; refused
+		// here rather than found out at the next sign-in (review R5).
+		if len(c.ApproverGroups) > 0 && o.GroupsClaim == "" {
+			return fmt.Errorf("%w: approver_groups require groups_claim", ErrInvalidInput)
 		}
 		if len(o.Scopes) == 0 {
 			o.Scopes = []string{"openid", "profile", "email"}
@@ -618,6 +639,11 @@ type Resolution struct {
 	// LiveSessionsEnded counts live sessions ended because a removal took
 	// away the group that granted them.
 	LiveSessionsEnded int
+	// ApproverGranted and ApproverWithdrawn: this sign-in gave the account
+	// the approver role, or took it, by the provider's approver groups
+	// (ADR 0049, 7). Never both. UserGranted says the withdrawal left no
+	// role and the account became a plain user.
+	ApproverGranted, ApproverWithdrawn, UserGranted bool
 }
 
 // ErrNotProvisioned is returned when auto-provisioning is off and there is
@@ -684,10 +710,83 @@ func (pv *Provisioner) Resolve(ctx context.Context, p *Opened, id Identity) (Res
 	if pv.Groups != nil && len(p.Config.GroupMapping) > 0 {
 		pv.syncGroups(ctx, p, id, u.ID, &res)
 	}
+	if !res.Created && len(p.Config.ApproverGroups) > 0 {
+		pv.syncApprover(ctx, p, id, u, &res)
+	}
 	if res.User, err = pv.Users.GetByID(ctx, u.ID); err != nil {
 		return Resolution{}, err
 	}
 	return res, nil
+}
+
+// approverWanted reports whether the asserted groups include one of the
+// provider's approver groups, matched as mapping keys are (holds).
+func approverWanted(p *Opened, id Identity) bool {
+	names := map[string]bool{}
+	for _, g := range id.Groups {
+		names[strings.ToLower(g)] = true
+	}
+	var dns []*goldap.DN
+	for _, raw := range id.GroupDNs {
+		if dn, err := goldap.ParseDN(raw); err == nil {
+			dns = append(dns, dn)
+		}
+	}
+	return slices.ContainsFunc(p.Config.ApproverGroups, func(key string) bool { return holds(key, names, dns) })
+}
+
+// syncApprover brings the account's approver role in line with the
+// provider's approver groups (ADR 0049, 7): granted to a member of one,
+// withdrawn from a holder in none; an account left with no role becomes a
+// plain user (the owner's call, 2026-11-17: a person the provider still signs
+// in should still open the portal). An administrator holds every role, so
+// nothing is done for one. A refusal to
+// change the roles leaves them as they are and the sign-in goes on; the
+// result says only what did change.
+func (pv *Provisioner) syncApprover(ctx context.Context, p *Opened, id Identity, u *user.User, res *Resolution) {
+	if u.HasRole(user.RoleAdmin) {
+		return
+	}
+	want, has := approverWanted(p, id), u.HasRole(user.RoleApprover)
+	switch {
+	case want && !has:
+		if pv.Users.SetRoles(ctx, u.ID, user.NormalizeRoles(append(slices.Clone(u.Roles), user.RoleApprover))) == nil {
+			res.ApproverGranted = true
+		}
+	case !want && has:
+		roles := slices.DeleteFunc(slices.Clone(u.Roles), func(r user.Role) bool { return r == user.RoleApprover })
+		fell := len(roles) == 0
+		if fell {
+			roles = []user.Role{user.RoleUser}
+		}
+		if pv.Users.SetRoles(ctx, u.ID, roles) == nil {
+			res.ApproverWithdrawn = true
+			res.UserGranted = fell
+		}
+	}
+}
+
+// cleanApproverGroups trims, drops empties and repeats (ignoring case, as the
+// groups are matched), and bounds the list: at most 32 entries of at most 256
+// characters.
+func cleanApproverGroups(in []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, g := range in {
+		g = strings.TrimSpace(g)
+		if g == "" || seen[strings.ToLower(g)] {
+			continue
+		}
+		if len(g) > 256 {
+			return nil, fmt.Errorf("%w: an approver group is at most 256 characters", ErrInvalidInput)
+		}
+		seen[strings.ToLower(g)] = true
+		out = append(out, g)
+	}
+	if len(out) > 32 {
+		return nil, fmt.Errorf("%w: at most 32 approver groups", ErrInvalidInput)
+	}
+	return out, nil
 }
 
 // syncGroups brings the user's mapped memberships in line with the groups
@@ -794,7 +893,13 @@ func (pv *Provisioner) create(ctx context.Context, p *Opened, id Identity) (*use
 	if name == "" {
 		name = id.Username
 	}
-	u := &user.User{Username: id.Username, DisplayName: name, Email: id.Email, Roles: p.Config.DefaultRoles, IdPID: p.ID, ExternalID: id.ExternalID}
+	roles := p.Config.DefaultRoles
+	// A member of an approver group is an approver from the first sign-in
+	// (ADR 0049, 7); the create event records the grant with the rest.
+	if len(p.Config.ApproverGroups) > 0 && approverWanted(p, id) {
+		roles = user.NormalizeRoles(append(slices.Clone(roles), user.RoleApprover))
+	}
+	u := &user.User{Username: id.Username, DisplayName: name, Email: id.Email, Roles: roles, IdPID: p.ID, ExternalID: id.ExternalID}
 	if err := pv.Users.Create(ctx, u); err != nil {
 		if errors.Is(err, user.ErrDuplicate) {
 			// adopt found no account by this username a moment ago, so this
@@ -837,6 +942,21 @@ func (r Resolution) Events(ip string, p *Opened, id Identity) []audit.Event {
 			d["live_sessions_ended"] = r.LiveSessionsEnded
 		}
 		out = append(out, actor.Event(audit.UserGroupsSync, "user", r.User.ID, audit.Success, d))
+	}
+	// The approver role granted or withdrawn by the provider's approver
+	// groups is a roles change on the record, as an administrator's is
+	// (ADR 0049): the same event, with the provider named as its cause.
+	if r.ApproverGranted || r.ApproverWithdrawn {
+		d := map[string]any{"idp": p.ID, "idp_name": p.Name, "via": "approver_groups", "roles": r.User.Roles}
+		if r.ApproverGranted {
+			d["roles_granted"] = []user.Role{user.RoleApprover}
+		} else {
+			d["roles_withdrawn"] = []user.Role{user.RoleApprover}
+			if r.UserGranted {
+				d["roles_granted"] = []user.Role{user.RoleUser}
+			}
+		}
+		out = append(out, actor.Event(audit.UserRolesUpdate, "user", r.User.ID, audit.Success, d))
 	}
 	return out
 }

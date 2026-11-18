@@ -126,9 +126,10 @@ describe('The access portal strip', () => {
     const base = { protocol: 'ssh', reason: 'x', requested_minutes: 60, created_at: '2026-10-30T09:00:00Z' }
     vi.spyOn(api, 'get').mockResolvedValue({
       items: [
-        { ...base, id: 'r1', status: 'pending', target_name: 'waiting-box' },
-        { ...base, id: 'r2', status: 'approved', expires_at: soon, target_name: 'ending-box' },
-        { ...base, id: 'r3', status: 'approved', expires_at: later, target_name: 'fine-box' },
+        // state beside status, as the gateway sends it (ADR 0047): the page reads state.
+        { ...base, id: 'r1', status: 'pending', state: 'pending', target_name: 'waiting-box' },
+        { ...base, id: 'r2', status: 'approved', state: 'approved', expires_at: soon, target_name: 'ending-box' },
+        { ...base, id: 'r3', status: 'approved', state: 'approved', expires_at: later, target_name: 'fine-box' },
       ],
     } as never)
     at('/access?show=pending', <MyAccess />, '/access')

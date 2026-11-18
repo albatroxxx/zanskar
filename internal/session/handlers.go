@@ -123,6 +123,7 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	if !h.withRetention(w, r, items...) {
 		return
 	}
+	h.withConsoleUntil(items...)
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Session]{Items: items, NextCursor: next})
 }
 
@@ -135,7 +136,28 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 	if !h.withRetention(w, r, s) {
 		return
 	}
+	h.withConsoleUntil(s)
 	httpx.WriteJSON(w, http.StatusOK, s)
+}
+
+// withConsoleUntil says when a live cloud session's console sign-in runs
+// out, which is the gateway's to know (ADR 0050): the registry holds it
+// beside the session, one lookup a row and no SQL. The list rows carry it as
+// the detail does, since the Sessions page reads the list (review
+// 2026-11-17, C5).
+func (h *Handler) withConsoleUntil(items ...*Session) {
+	if h.Registry == nil {
+		return
+	}
+	for _, s := range items {
+		if s.Protocol != "cloud" || s.EndedAt != nil {
+			continue
+		}
+		if l, ok := h.Registry.Get(s.ID); ok && l.Cloud != nil && l.Cloud.ConsoleUntil != nil {
+			until := *l.Cloud.ConsoleUntil
+			s.CloudConsoleUntil = &until
+		}
+	}
 }
 
 // withRetention says when each session's recording goes, under the global

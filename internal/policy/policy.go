@@ -101,10 +101,35 @@ type Grant struct {
 	Namespaces   []string `json:"namespaces,omitempty"`
 	ClusterScope bool     `json:"cluster_scope,omitempty"`
 	PortForward  bool     `json:"port_forward,omitempty"`
+	// A cloud grant's switches (ADR 0050, 2): whether its sessions may open
+	// the account's console and take command-line credentials. Both on when
+	// a cloud grant leaves them out, and stored said; refused on every other
+	// kind. Where grants overlap, a session has each only if every deciding
+	// grant allows it, as for the clipboard.
+	CloudConsole *bool `json:"cloud_console,omitempty"`
+	CloudCLI     *bool `json:"cloud_cli,omitempty"`
+	// Approvers are the groups and users who decide the requests this
+	// grant makes people eligible for (ADR 0049): the same shape as a
+	// policy's subjects, 0 to MaxGrantApprovers, approval grants only.
+	// Empty leaves the decision to any administrator, as before. Kept last
+	// in the struct so the cloud grant's fields (ADR 0050) sit beside the
+	// Kubernetes ones above.
+	Approvers []Subject `json:"approvers,omitempty"`
 }
+
+// ConsoleAllowed reports whether a cloud grant opens the console: on unless
+// it says off.
+func (g *Grant) ConsoleAllowed() bool { return g.CloudConsole == nil || *g.CloudConsole }
+
+// CLIAllowed reports whether a cloud grant hands out command-line
+// credentials: on unless it says off.
+func (g *Grant) CLIAllowed() bool { return g.CloudCLI == nil || *g.CloudCLI }
 
 // MaxGrantNamespaces bounds a grant's namespace list.
 const MaxGrantNamespaces = 64
+
+// MaxGrantApprovers bounds a grant's approvers (ADR 0049).
+const MaxGrantApprovers = 32
 
 // namespaceRe is a DNS label, which is what a namespace name is.
 var namespaceRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -152,6 +177,9 @@ var (
 	// the API names with codes of their own.
 	ErrProtocolNotForKind = errors.New("protocol not served by the kind")
 	ErrUnknownSubject     = errors.New("subject not found")
+	// ErrApproversWithoutApproval: a standing grant named approvers, who
+	// would have nothing to decide (ADR 0049).
+	ErrApproversWithoutApproval = errors.New("approvers on a standing grant")
 )
 
 var dayIndex = map[string]time.Weekday{"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday, "thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday}
@@ -220,6 +248,24 @@ func (g *Grant) validate() error {
 	if g.Kind != protocol.KindKubernetes && (len(g.Namespaces) > 0 || g.ClusterScope || g.PortForward) {
 		return fmt.Errorf("%w: namespaces, cluster_scope and port_forward are for Kubernetes grants only", ErrInvalidInput)
 	}
+	if g.Kind != protocol.KindCloud && (g.CloudConsole != nil || g.CloudCLI != nil) {
+		return fmt.Errorf("%w: cloud_console and cloud_cli are for cloud grants only", ErrInvalidInput)
+	}
+	if g.Kind == protocol.KindCloud {
+		// The defaults are stored said, so a reader of the grant sees what
+		// its sessions may do; a grant with both off admits nothing a
+		// session could use, which is a mistake, not a choice.
+		on := true
+		if g.CloudConsole == nil {
+			g.CloudConsole = &on
+		}
+		if g.CloudCLI == nil {
+			g.CloudCLI = &on
+		}
+		if !*g.CloudConsole && !*g.CloudCLI {
+			return fmt.Errorf("%w: a cloud grant needs the console or the command line on", ErrInvalidInput)
+		}
+	}
 	if len(g.Namespaces) > MaxGrantNamespaces {
 		return fmt.Errorf("%w: at most %d namespaces", ErrInvalidInput, MaxGrantNamespaces)
 	}
@@ -277,6 +323,9 @@ func (g *Grant) validate() error {
 	default:
 		return fmt.Errorf("%w: access must be standing or approval", ErrInvalidInput)
 	}
+	if err := g.validateApprovers(); err != nil {
+		return err
+	}
 	switch g.SignIn {
 	case "":
 		g.SignIn = SignInTarget
@@ -308,6 +357,61 @@ func (g *Grant) validate() error {
 		g.TimeWindows = []TimeWindow{}
 	}
 	return nil
+}
+
+// validateApprovers checks the grant's approvers (ADR 0049): approval grants
+// only, each a group or a user by id, none twice, at most MaxGrantApprovers.
+// Whether a user approver holds the role is the handler's check, which has
+// the users.
+func (g *Grant) validateApprovers() error {
+	if len(g.Approvers) == 0 {
+		g.Approvers = nil
+		return nil
+	}
+	if g.Access != AccessApproval {
+		return fmt.Errorf("%w: %w: approvers decide requests, which only an approval grant has", ErrInvalidInput, ErrApproversWithoutApproval)
+	}
+	if len(g.Approvers) > MaxGrantApprovers {
+		return fmt.Errorf("%w: at most %d approvers", ErrInvalidInput, MaxGrantApprovers)
+	}
+	seen := map[Subject]bool{}
+	for _, a := range g.Approvers {
+		if (a.Kind != SubjectGroup && a.Kind != SubjectUser) || a.ID == "" {
+			return fmt.Errorf("%w: an approver is a group or a user, by id", ErrInvalidInput)
+		}
+		if seen[a] {
+			return fmt.Errorf("%w: approver %s %s is named twice", ErrInvalidInput, a.Kind, a.ID)
+		}
+		seen[a] = true
+	}
+	return nil
+}
+
+// ApproversOf is the union of the approvers of the approval grants, among
+// those given, that cover ref and proto (ADR 0049): who decides a request
+// for them. Enabled policies only; each subject once, in the order first
+// seen; nil when no covering grant names anyone.
+func ApproversOf(policies []*Policy, ref TargetRef, proto string) []Subject {
+	var out []Subject
+	seen := map[Subject]bool{}
+	for _, p := range policies {
+		if !p.Enabled {
+			continue
+		}
+		for i := range p.Grants {
+			g := &p.Grants[i]
+			if g.Access != AccessApproval || !g.Covers(ref, proto) {
+				continue
+			}
+			for _, a := range g.Approvers {
+				if !seen[a] {
+					seen[a] = true
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // validProtocols checks a protocol list against what the grant's kind serves.
@@ -514,6 +618,27 @@ type Decision struct {
 	// namespace admits it whatever another grant says, as a grant that
 	// admits a target does. Nil for every other kind.
 	Kube *KubeScope `json:"kube,omitempty"`
+	// Cloud is a cloud session's switches (ADR 0050, 2): the console and
+	// the command line, each open only when every deciding grant allows it,
+	// the strictest as for the clipboard. Nil for every other kind.
+	Cloud *CloudTerms `json:"cloud,omitempty"`
+}
+
+// CloudTerms is what a cloud session may do (ADR 0050, 2).
+type CloudTerms struct {
+	Console bool `json:"console"`
+	CLI     bool `json:"cli"`
+}
+
+// cloudTerms is the strictest of the deciding grants' switches: a session
+// has the console, or the command line, only if every grant allows it.
+func cloudTerms(set []decider) *CloudTerms {
+	c := &CloudTerms{Console: true, CLI: true}
+	for _, d := range set {
+		c.Console = c.Console && d.g.ConsoleAllowed()
+		c.CLI = c.CLI && d.g.CLIAllowed()
+	}
+	return c
 }
 
 // KubeScope is what a Kubernetes session may reach (ADR 0045, 4).
@@ -662,6 +787,9 @@ func evaluate(policies []*Policy, t TargetRef, proto string, now time.Time, wind
 	d.IdleTimeout = time.Duration(best.g.IdleTimeoutMinutes) * time.Minute
 	if t.Kind == protocol.KindKubernetes {
 		d.Kube = kubeScope(set)
+	}
+	if t.Kind == protocol.KindCloud {
+		d.Cloud = cloudTerms(set)
 	}
 	return d
 }

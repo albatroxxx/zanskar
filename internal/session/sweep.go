@@ -4,7 +4,9 @@ package session
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -82,6 +84,12 @@ type Sweeper struct {
 	// session is in the registry a moment after its row is written, and Live
 	// covers one still being set up.
 	Grace time.Duration
+
+	// tried holds the recordings left awaiting an activity read that this
+	// process has finished or given up on, so one whose blob is gone is
+	// audited as lost once, not every minute.
+	mu    sync.Mutex
+	tried map[string]bool
 }
 
 // sweepGrace is the default Grace.
@@ -98,16 +106,98 @@ const sweepCloseTimeout = 10 * time.Second
 // process began is abandoned.
 func (s *Sweeper) Startup(ctx context.Context, boot time.Time) {
 	s.pass(ctx, boot, EndGatewayRestart, "the gateway restarted while this session was open")
+	// A cloud session's recording left open for its activity's last read
+	// (ADR 0050, phase C) by the process before this one: nothing will come
+	// back to it, whenever the session ended.
+	s.finishAwaiting(ctx, boot, "gateway restarted")
 }
 
 // Pass closes the rows this gateway has lost track of since: a row open for
 // longer than Grace whose session is neither in the registry nor starting.
+// It also finishes a cloud recording still awaiting its activity read past
+// the grace, when no run of this gateway holds it.
 func (s *Sweeper) Pass(ctx context.Context) {
 	grace := s.Grace
 	if grace <= 0 {
 		grace = sweepGrace
 	}
-	s.pass(ctx, time.Now().Add(-grace), EndError, "the gateway lost track of this session")
+	now := time.Now()
+	s.pass(ctx, now.Add(-grace), EndError, "the gateway lost track of this session")
+	s.finishAwaiting(ctx, now.Add(-CloudActivityGrace), "the gateway lost track of this session")
+}
+
+// finishAwaiting finishes the recordings cloud sessions left open for their
+// activity read (phase C) and no run of this gateway will come back to:
+// those of sessions ended before cutoff that Live does not claim. The reason
+// goes on the recording as a line, as the run's own read would have written
+// its outcome, where storage lets a line be added; then the recording is
+// finished from what storage holds, as a swept session's is. A blob storage
+// cannot open (an object store takes the blob whole on close, and this one
+// never closed) is lost, audited once. Left unfinished, the recording would
+// never be purged by retention nor indexed (the sweep's lesson of
+// 2026-11-07).
+func (s *Sweeper) finishAwaiting(ctx context.Context, cutoff time.Time, why string) {
+	recs, err := s.Repo.AwaitingRecordings(ctx, cutoff)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.Log.Warn("cannot list recordings awaiting their activity read", "err", err)
+		}
+		return
+	}
+	for _, rec := range recs {
+		if (s.Live != nil && s.Live(rec.SessionID)) || !s.first(rec.ID) {
+			continue
+		}
+		s.Log.Warn("finishing a cloud recording left awaiting its activity read", "session", rec.SessionID, "recording", rec.ID, "why", why)
+		note := s.finishAwaitingOne(ctx, rec, "activity not read: "+why)
+		s.record(ctx, audit.SessionCloudActivity, "access_session", rec.SessionID, audit.Failure,
+			map[string]string{"error": why, "recording_id": rec.ID, "recording": note, "by": "the gateway's sweep of open sessions"})
+	}
+}
+
+// first reports whether this process has not tried the recording yet, and
+// marks it tried.
+func (s *Sweeper) first(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tried == nil {
+		s.tried = map[string]bool{}
+	}
+	if s.tried[id] {
+		return false
+	}
+	s.tried[id] = true
+	return true
+}
+
+// finishAwaitingOne writes line to the recording where it can, then finishes
+// it from what storage holds; it returns the note for the event.
+func (s *Sweeper) finishAwaitingOne(ctx context.Context, rec *Recording, line string) string {
+	if s.Storage == nil {
+		return "left unfinished: no storage to measure it"
+	}
+	note := ""
+	switch err := recording.AppendMarker(ctx, s.Storage, rec.StorageURI, line); {
+	case err == nil:
+		note = "the line was written; "
+	case errors.Is(err, recording.ErrNoAppend):
+		note = "the storage takes no line after the close; "
+	default:
+		s.Log.Error("sweep: write to recording awaiting its activity read", "recording", rec.ID, "err", err)
+		note = "the line could not be written: " + err.Error() + "; "
+	}
+	size, sum, err := recording.Measure(ctx, s.Storage, rec.StorageURI)
+	if err != nil {
+		s.Log.Error("sweep: measure recording", "recording", rec.ID, "err", err)
+		s.record(ctx, audit.RecordingLost, "recording", rec.ID, audit.Failure,
+			map[string]string{"session_id": rec.SessionID, "error": err.Error(), "by": "the gateway's sweep of open sessions"})
+		return note + "lost: " + err.Error()
+	}
+	if err := s.Repo.FinishRecording(ctx, rec.ID, size, sum); err != nil {
+		s.Log.Error("sweep: finish recording", "recording", rec.ID, "err", err)
+		return note + "left unfinished: " + err.Error()
+	}
+	return note + "finished from what storage holds"
 }
 
 // Run sweeps every minute until ctx ends.
@@ -125,7 +215,11 @@ func (s *Sweeper) Run(ctx context.Context) {
 }
 
 func (s *Sweeper) pass(ctx context.Context, cutoff time.Time, reason, detail string) {
-	ended, err := s.Repo.EndAbandoned(ctx, cutoff, s.Live, reason, detail)
+	live := s.Live
+	if live == nil {
+		live = func(string) bool { return false }
+	}
+	ended, err := s.Repo.EndAbandoned(ctx, cutoff, live, reason, detail)
 	if err != nil && ctx.Err() == nil {
 		s.Log.Warn("cannot end abandoned sessions", "err", err)
 	}

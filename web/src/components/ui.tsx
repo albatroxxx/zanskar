@@ -288,14 +288,17 @@ export function Modal({ title, onClose, children, width, anchored }: { title: st
   )
 }
 
-export function Confirm({ title, body, confirmLabel, danger, onConfirm, onClose }: { title: string; body: ReactNode; confirmLabel?: string; danger?: boolean; onConfirm: () => Promise<void> | void; onClose: () => void }) {
+/** Confirm asks once before an action. dismissLabel replaces Cancel on the
+ *  way out where the action itself is a cancel, so the two verbs do not sit
+ *  side by side. */
+export function Confirm({ title, body, confirmLabel, dismissLabel, danger, onConfirm, onClose }: { title: string; body: ReactNode; confirmLabel?: string; dismissLabel?: string; danger?: boolean; onConfirm: () => Promise<void> | void; onClose: () => void }) {
   const { busy, err, submit } = useSubmit()
   return (
     <Modal title={title} onClose={onClose}>
       <div>{body}</div>
       {err && <Alert tone="danger">{err}</Alert>}
       <div className="actions">
-        <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+        <button className="btn" onClick={onClose} disabled={busy}>{dismissLabel ?? 'Cancel'}</button>
         <button
           className={'btn ' + (danger ? 'danger' : 'primary')}
           disabled={busy}

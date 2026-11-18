@@ -25,7 +25,8 @@ func NewRepo(db *store.DB) *Repo { return &Repo{db: db} }
 const cols = `id, name, address, os_family, ports, capabilities, host_key_fingerprint, host_key_status,
 	tls_fingerprint, tags, status, notes, created_by, created_at, updated_at, last_probed_at, winrm_tls_fingerprint,
 	engine, engine_version, retention_days, database_name, tls_mode, tls_ca, tls_fingerprint_pending, winrm_tls_fingerprint_pending,
-	app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate, kube_platform`
+	app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate, kube_platform,
+	cloud_platform, cloud_account_id, cloud_account_alias, cloud_role_arn, cloud_external_id, cloud_max_minutes, cloud_region`
 
 // Create validates and inserts t, including its credential mapping.
 func (r *Repo) Create(ctx context.Context, t *Target) error {
@@ -45,12 +46,14 @@ func (r *Repo) Create(ctx context.Context, t *Target) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 	_, err = tx.ExecContext(ctx, r.db.Rebind(`INSERT INTO targets
-		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate, kube_platform)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		(id, name, address, os_family, ports, capabilities, host_key_status, tags, status, notes, created_by, created_at, updated_at, engine, engine_version, retention_days, database_name, tls_mode, tls_ca, app_upstream, app_endpoints, app_dependencies, app_private, kube_api_server, kube_ca, kube_impersonate, kube_platform,
+		cloud_platform, cloud_account_id, cloud_account_alias, cloud_role_arn, cloud_external_id, cloud_max_minutes, cloud_region)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		t.ID, t.Name, t.Address, string(t.OSFamily), ports, capsJSON, string(HostKeyUnknown), tags, t.Status, t.Notes,
 		nullStr(t.CreatedBy), store.TimeArg(now), store.TimeArg(now), t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
 		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), privateJSON(t.AppPrivate),
-		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), emptyNull(t.KubePlatform))
+		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), emptyNull(t.KubePlatform),
+		emptyNull(t.CloudPlatform), emptyNull(t.CloudAccountID), emptyNull(t.CloudAccountAlias), emptyNull(t.CloudRoleARN), emptyNull(t.CloudExternalID), cloudMinutesArg(t), emptyNull(t.CloudRegion))
 	if err != nil {
 		return mapErr(err)
 	}
@@ -88,7 +91,7 @@ func (r *Repo) getWhere(ctx context.Context, where string, arg any) (*Target, er
 // ListFilter narrows List. Zero values match everything.
 type ListFilter struct {
 	Tags     map[string]string
-	Kind     string // "host" | "database" | "application" | "kubernetes"
+	Kind     string // "host" | "database" | "application" | "kubernetes" | "cloud"
 	Status   string // "active" | "disabled"
 	OSFamily string
 	// Platform narrows clusters to one Kubernetes platform (ADR 0048, 2).
@@ -112,15 +115,26 @@ const (
 	KindDatabase    = "database"
 	KindApplication = "application"
 	KindKubernetes  = "kubernetes"
+	KindCloud       = "cloud"
 )
 
 // kindClauses narrow a targets query to one kind. A host is what is neither
-// a database, an application nor a Kubernetes cluster.
+// a database, an application, a Kubernetes cluster nor a cloud account's
+// role (ADR 0050).
 var kindClauses = map[string]string{
-	KindHost:        ` AND COALESCE(engine, '') = '' AND COALESCE(app_upstream, '') = '' AND COALESCE(kube_api_server, '') = ''`,
+	KindHost:        ` AND COALESCE(engine, '') = '' AND COALESCE(app_upstream, '') = '' AND COALESCE(kube_api_server, '') = '' AND COALESCE(cloud_role_arn, '') = ''`,
 	KindDatabase:    ` AND COALESCE(engine, '') <> ''`,
 	KindApplication: ` AND COALESCE(app_upstream, '') <> ''`,
 	KindKubernetes:  ` AND COALESCE(kube_api_server, '') <> ''`,
+	KindCloud:       ` AND COALESCE(cloud_role_arn, '') <> ''`,
+}
+
+// cloudMinutesArg stores a role's maximum, NULL on anything else.
+func cloudMinutesArg(t *Target) any {
+	if !t.IsCloud() {
+		return nil
+	}
+	return t.CloudMaxMinutes
 }
 
 // kubeImpersonateArg stores a cluster's impersonation switch: 1 or 0 for a
@@ -178,6 +192,10 @@ type Inventory struct {
 	// Clusters, and how many of each platform, for Fabric's tiles (ADR 0048).
 	Clusters   int            `json:"clusters"`
 	ByPlatform map[string]int `json:"clusters_by_platform"`
+	// Cloud roles, and the accounts they are in (ADR 0050), for the
+	// dashboard's tile.
+	CloudRoles    int `json:"cloud_roles"`
+	CloudAccounts int `json:"cloud_accounts"`
 }
 
 // CountInventory returns the Inventory in three counts, one after the other
@@ -215,6 +233,15 @@ func (r *Repo) CountInventory(ctx context.Context) (Inventory, error) {
 		return Inventory{}, err
 	}
 	if inv.Clusters, err = count("COALESCE(kube_platform, 'vanilla')", KindKubernetes, inv.ByPlatform); err != nil {
+		return Inventory{}, err
+	}
+	// Two counts, one after the other (single-connection SQLite).
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM targets WHERE deleted_at IS NULL AND status = 'active'`+kindClauses[KindCloud]).Scan(&inv.CloudRoles)
+	if err != nil {
+		return Inventory{}, err
+	}
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT cloud_account_id) FROM targets WHERE deleted_at IS NULL AND status = 'active'`+kindClauses[KindCloud]).Scan(&inv.CloudAccounts)
+	if err != nil {
 		return Inventory{}, err
 	}
 	return inv, nil
@@ -317,11 +344,14 @@ func (r *Repo) Update(ctx context.Context, t *Target) error {
 	res, err := tx.ExecContext(ctx, r.db.Rebind(`UPDATE targets SET name = ?, address = ?, os_family = ?, ports = ?, capabilities = ?,
 		tags = ?, status = ?, notes = ?, engine = ?, engine_version = ?, retention_days = ?, database_name = ?, tls_mode = ?, tls_ca = ?,
 		app_upstream = ?, app_endpoints = ?, app_dependencies = ?, app_private = ?, kube_api_server = ?, kube_ca = ?, kube_impersonate = ?,
-		kube_platform = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
+		kube_platform = ?, cloud_platform = ?, cloud_account_id = ?, cloud_account_alias = ?, cloud_role_arn = ?, cloud_external_id = ?, cloud_max_minutes = ?, cloud_region = ?,
+		updated_at = ? WHERE id = ? AND deleted_at IS NULL`),
 		t.Name, t.Address, string(t.OSFamily), mustJSON(t.Ports), mustJSON(t.Capabilities), mustJSON(t.Tags), t.Status, t.Notes,
 		t.Engine, t.EngineVersion, nullInt(t.RetentionDays), t.DatabaseName, t.TLSMode, t.TLSCA,
 		emptyNull(t.AppUpstream), endpointsJSON(t.AppEndpoints), emptyNull(t.AppDependencies), privateJSON(t.AppPrivate),
-		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), emptyNull(t.KubePlatform), store.TimeArg(now), t.ID)
+		emptyNull(t.KubeAPIServer), emptyNull(t.KubeCA), kubeImpersonateArg(t), emptyNull(t.KubePlatform),
+		emptyNull(t.CloudPlatform), emptyNull(t.CloudAccountID), emptyNull(t.CloudAccountAlias), emptyNull(t.CloudRoleARN), emptyNull(t.CloudExternalID), cloudMinutesArg(t), emptyNull(t.CloudRegion),
+		store.TimeArg(now), t.ID)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -657,25 +687,28 @@ func replaceCredentialsTx(ctx context.Context, tx *sql.Tx, db *store.DB, id stri
 
 func scanTarget(s store.Scanner) (*Target, error) {
 	var (
-		t                       Target
-		osFamily, hkStatus      string
-		ports, capsRaw, tagsRaw []byte
-		hk, tlsFP, createdBy    sql.NullString
-		winrmFP                 sql.NullString
-		tlsPend, winrmPend      sql.NullString
-		engine, engineVer       sql.NullString
-		retention               sql.NullInt64
-		dbName, tlsMode, tlsCA  sql.NullString
-		appUpstream, appDeps    sql.NullString
-		appEndpoints, appPriv   []byte
-		kubeServer, kubeCA      sql.NullString
-		kubeImpersonate         sql.NullInt64
-		kubePlatform            sql.NullString
-		created, updated, probe store.NullTime
+		t                                                                              Target
+		osFamily, hkStatus                                                             string
+		ports, capsRaw, tagsRaw                                                        []byte
+		hk, tlsFP, createdBy                                                           sql.NullString
+		winrmFP                                                                        sql.NullString
+		tlsPend, winrmPend                                                             sql.NullString
+		engine, engineVer                                                              sql.NullString
+		retention                                                                      sql.NullInt64
+		dbName, tlsMode, tlsCA                                                         sql.NullString
+		appUpstream, appDeps                                                           sql.NullString
+		appEndpoints, appPriv                                                          []byte
+		kubeServer, kubeCA                                                             sql.NullString
+		kubeImpersonate                                                                sql.NullInt64
+		kubePlatform                                                                   sql.NullString
+		cloudPlatform, cloudAccount, cloudAlias, cloudRole, cloudExternal, cloudRegion sql.NullString
+		cloudMinutes                                                                   sql.NullInt64
+		created, updated, probe                                                        store.NullTime
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Address, &osFamily, &ports, &capsRaw, &hk, &hkStatus, &tlsFP, &tagsRaw,
 		&t.Status, &t.Notes, &createdBy, &created, &updated, &probe, &winrmFP, &engine, &engineVer, &retention, &dbName, &tlsMode, &tlsCA, &tlsPend, &winrmPend,
-		&appUpstream, &appEndpoints, &appDeps, &appPriv, &kubeServer, &kubeCA, &kubeImpersonate, &kubePlatform)
+		&appUpstream, &appEndpoints, &appDeps, &appPriv, &kubeServer, &kubeCA, &kubeImpersonate, &kubePlatform,
+		&cloudPlatform, &cloudAccount, &cloudAlias, &cloudRole, &cloudExternal, &cloudMinutes, &cloudRegion)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -686,6 +719,17 @@ func scanTarget(s store.Scanner) (*Target, error) {
 	t.Engine, t.EngineVersion = engine.String, engineVer.String
 	t.AppUpstream, t.AppDependencies = appUpstream.String, appDeps.String
 	t.KubeAPIServer, t.KubeCA = kubeServer.String, kubeCA.String
+	if cloudRole.String != "" {
+		t.CloudRoleARN, t.CloudPlatform, t.CloudAccountID = cloudRole.String, cloudPlatform.String, cloudAccount.String
+		t.CloudAccountAlias, t.CloudExternalID, t.CloudRegion = cloudAlias.String, cloudExternal.String, cloudRegion.String
+		if t.CloudPlatform == "" {
+			t.CloudPlatform = CloudPlatformAWS
+		}
+		t.CloudMaxMinutes = int(cloudMinutes.Int64)
+		if t.CloudMaxMinutes == 0 {
+			t.CloudMaxMinutes = CloudMaxMinutesDefault
+		}
+	}
 	if kubeServer.String != "" {
 		t.KubePlatform = kubePlatform.String
 		if t.KubePlatform == "" {

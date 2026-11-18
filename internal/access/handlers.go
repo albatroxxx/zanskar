@@ -15,7 +15,9 @@ import (
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
 	"github.com/albatroxxx/zanskar/internal/gateway"
+	"github.com/albatroxxx/zanskar/internal/group"
 	"github.com/albatroxxx/zanskar/internal/httpx"
+	"github.com/albatroxxx/zanskar/internal/notify"
 	"github.com/albatroxxx/zanskar/internal/policy"
 	"github.com/albatroxxx/zanskar/internal/protocol"
 	"github.com/albatroxxx/zanskar/internal/states"
@@ -23,8 +25,13 @@ import (
 	"github.com/albatroxxx/zanskar/internal/user"
 )
 
+// notifyNoServer is notify.ErrNoMailServer, named here so the mail path
+// reads without the package.
+var notifyNoServer = notify.ErrNoMailServer
+
 // Handler serves the access-request lifecycle: users request and view their own
-// access; admins approve, deny and revoke (ADR 0018).
+// access; admins, and the approvers a grant names (ADR 0049), approve, deny
+// and revoke (ADR 0018).
 type Handler struct {
 	Requests *Repo
 	Policies *policy.Repo
@@ -32,6 +39,14 @@ type Handler struct {
 	// ASGs finds the autoscaling group a request names; nil refuses such
 	// requests as not found.
 	ASGs *asg.Repo
+	// Users and Groups resolve a grant's approvers to people (ADR 0049):
+	// who may decide, and the names the queue shows. Nil treats every grant
+	// as naming nobody, so any administrator decides.
+	Users  *user.Repo
+	Groups *group.Repo
+	// Mail tells a request's named approvers directly (ADR 0049, 6); nil
+	// tells nobody, and the channels still receive the event.
+	Mail *notify.Direct
 	// Revoker ends the live sessions a revoked grant admitted (ADR 0013,
 	// ADR 0018); nil leaves them to their own limits.
 	Revoker gateway.Revoker
@@ -46,19 +61,23 @@ type Handler struct {
 	MFAEnrolled func(ctx context.Context, userID string) (bool, error)
 }
 
-// Register mounts the routes. Creating and viewing one's own requests needs an
-// account that may connect (user or admin; auditor-only accounts are
-// review-only); approving, denying and revoking need the admin role.
+// Register mounts the routes. Creating, viewing, cancelling and ending one's
+// own requests needs an account that may connect (user or admin;
+// auditor-only accounts are review-only). The queue and the decisions admit
+// the admin and approver roles at the route; who may decide which request
+// is the handler's check (ADR 0049).
 func (h *Handler) Register(mux *http.ServeMux) {
-	admin := auth.RequireRole(user.RoleAdmin)
+	decide := auth.RequireRole(user.RoleAdmin, user.RoleApprover)
 	mux.Handle("POST /api/v1/me/access-requests", auth.RequireConnect(http.HandlerFunc(h.create)))
 	mux.Handle("GET /api/v1/me/access-requests", auth.RequireConnect(http.HandlerFunc(h.myList)))
+	mux.Handle("POST /api/v1/me/access-requests/{id}/cancel", auth.RequireConnect(http.HandlerFunc(h.cancel)))
+	mux.Handle("POST /api/v1/me/access-requests/{id}/end", auth.RequireConnect(http.HandlerFunc(h.end)))
 	mux.Handle("GET /api/v1/me/access", auth.RequireConnect(http.HandlerFunc(h.myActive)))
-	mux.Handle("GET /api/v1/access-requests", admin(http.HandlerFunc(h.adminList)))
-	mux.Handle("GET /api/v1/access-requests/{id}", admin(http.HandlerFunc(h.one)))
-	mux.Handle("POST /api/v1/access-requests/{id}/approve", admin(http.HandlerFunc(h.approve)))
-	mux.Handle("POST /api/v1/access-requests/{id}/deny", admin(http.HandlerFunc(h.deny)))
-	mux.Handle("POST /api/v1/access-requests/{id}/revoke", admin(http.HandlerFunc(h.revoke)))
+	mux.Handle("GET /api/v1/access-requests", decide(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/access-requests/{id}", decide(http.HandlerFunc(h.one)))
+	mux.Handle("POST /api/v1/access-requests/{id}/approve", decide(http.HandlerFunc(h.approve)))
+	mux.Handle("POST /api/v1/access-requests/{id}/deny", decide(http.HandlerFunc(h.deny)))
+	mux.Handle("POST /api/v1/access-requests/{id}/revoke", decide(http.HandlerFunc(h.revoke)))
 }
 
 type createInput struct {
@@ -117,6 +136,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("requested duration exceeds the policy maximum of %d minutes", most))
 		return
 	}
+	// Who decides it (ADR 0049): a request nobody but its author could
+	// approve is refused now rather than left waiting.
+	who, err := h.resolve(r.Context(), newNames(), pols, ref, in.Protocol)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if !h.requireOthers(w, r, pr, who) {
+		return
+	}
 	// One open request per (user, target or group, protocol): a second pending one
 	// would only put the same decision in front of the approver twice, and a
 	// request while a grant is active is an extension or nothing.
@@ -147,7 +176,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.record(r, audit.AccessRequestCreate, req, map[string]any{"extends_request_id": req.ExtendsRequestID})
+	h.record(r, audit.AccessRequestCreate, req, map[string]any{"extends_request_id": req.ExtendsRequestID, "named_approvers": who.isNamed()})
+	req.Approvers, req.Named = append([]ApproverRef{}, who.named...), who.isNamed()
+	if who.isNamed() {
+		// The names beside the request, for the mail; the row as read.
+		if full, err := h.Requests.Get(r.Context(), req.ID); err == nil {
+			// The request's values travel; its cancellation, which comes
+			// with the answer, does not.
+			go h.mailApprovers(context.WithoutCancel(r.Context()), who, pr.User, full)
+		}
+	}
 	httpx.WriteJSON(w, http.StatusCreated, req)
 }
 
@@ -237,33 +275,6 @@ func (h *Handler) myActive(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Request]{Items: list})
 }
 
-func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
-	status := Status(r.URL.Query().Get("status"))
-	switch status {
-	case "", StatusPending, StatusApproved, StatusDenied, StatusExpired, StatusRevoked:
-	default:
-		httpx.BadRequest(w, r, "unknown status filter")
-		return
-	}
-	list, err := h.Requests.List(r.Context(), status)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, httpx.Page[*Request]{Items: list})
-}
-
-// one is a single request, for the link a notification carries: it opens
-// the request whether it still waits or was decided meanwhile.
-func (h *Handler) one(w http.ResponseWriter, r *http.Request) {
-	req, err := h.Requests.Get(r.Context(), r.PathValue("id"))
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, req)
-}
-
 // steppedUp refuses an approval, while the setting asks for it, from an
 // approver who has an authenticator and has not proved it in the last
 // auth.StepUpWindow (2026-11-03, idea 3). A notification links to the
@@ -301,13 +312,10 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusConflict, "conflict", "request is not pending")
 		return
 	}
-	if !h.steppedUp(w, r, pr) {
-		return
-	}
-	d := h.decision(r)
-	// Eligibility and the cap are decided by the policies as they stand now,
-	// not as they stood when the request was made: a policy lowered, deleted
-	// or moved off the requester since then bounds or refuses the grant.
+	// Eligibility, the cap and who decides are taken from the policies as
+	// they stand now, not as they stood when the request was made: a policy
+	// lowered, deleted or moved off the requester since then bounds or
+	// refuses the grant, and approvers named since then are the ones asked.
 	ref, ok := h.subject(w, r, createInput{TargetID: cur.TargetID, ASGID: cur.ASGID})
 	if !ok {
 		return
@@ -317,6 +325,15 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	who, err := h.resolve(r.Context(), newNames(), pols, ref, cur.Protocol)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if !h.mayDecide(w, r, pr, cur, who) || !h.steppedUp(w, r, pr) {
+		return
+	}
+	d := h.decision(r)
 	elig, found := eligible(pols, ref, cur.Protocol)
 	if !found {
 		httpx.WriteError(w, r, http.StatusConflict, "not_eligible",
@@ -359,7 +376,16 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deny(w http.ResponseWriter, r *http.Request) {
 	pr, _ := auth.FromContext(r.Context())
-	req, err := h.Requests.Decide(r.Context(), r.PathValue("id"), pr.User.ID, StatusDenied, h.note(w, r), nil, 0)
+	cur, err := h.Requests.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	who, ok := h.decidersFor(w, r, cur)
+	if !ok || !h.mayDecide(w, r, pr, cur, who) {
+		return
+	}
+	req, err := h.Requests.Decide(r.Context(), cur.ID, pr.User.ID, StatusDenied, h.note(w, r), nil, 0)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -369,7 +395,17 @@ func (h *Handler) deny(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	req, err := h.Requests.Revoke(r.Context(), r.PathValue("id"), h.note(w, r))
+	pr, _ := auth.FromContext(r.Context())
+	cur, err := h.Requests.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	who, ok := h.decidersFor(w, r, cur)
+	if !ok || !h.mayRevoke(w, r, pr, cur, who) {
+		return
+	}
+	req, err := h.Requests.Revoke(r.Context(), cur.ID, h.note(w, r))
 	if err != nil {
 		h.fail(w, r, err)
 		return

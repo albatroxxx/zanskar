@@ -12,6 +12,7 @@ export const kinds: { kind: TargetKind; label: string }[] = [
   { kind: 'application', label: 'Application' },
   { kind: 'autoscaling', label: 'Autoscaling' },
   { kind: 'kubernetes', label: 'Kubernetes' },
+  { kind: 'cloud', label: 'Cloud account' },
 ]
 
 /** What each kind serves; a grant offers nothing else. */
@@ -21,14 +22,21 @@ export const kindProtocols: Record<TargetKind, Protocol[]> = {
   database: ['database'],
   application: ['http'],
   kubernetes: ['kube', 'pod'],
+  cloud: ['cloud'],
 }
 
-/** A target's kind: an engine makes it a database, an upstream an application, an API server a Kubernetes cluster. */
-export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server'>): TargetKind {
+/** A target's kind: an engine makes it a database, an upstream an application, an API server a Kubernetes cluster, a role ARN a cloud account's role (ADR 0050). */
+export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_server' | 'cloud_role_arn'>): TargetKind {
   if (t.engine) return 'database'
   if (t.app_upstream) return 'application'
   if (t.kube_api_server) return 'kubernetes'
+  if (t.cloud_role_arn) return 'cloud'
   return 'host'
+}
+
+/** isImplicit says a kind serves one protocol, chosen for the admin: a database, an application, a cloud role. */
+export function isImplicit(kind: TargetKind): boolean {
+  return kind === 'database' || kind === 'application' || kind === 'cloud'
 }
 
 /**
@@ -37,7 +45,7 @@ export function kindOf(t: Pick<Target, 'engine' | 'app_upstream' | 'kube_api_ser
  * serves. An autoscaling group offers its declared capabilities.
  */
 export function chipsFor(kind: TargetKind, t: Pick<Target, 'capabilities' | 'os_family'> | Pick<AutoscalingGroup, 'capabilities' | 'os_family'>): Protocol[] {
-  if (kind === 'database' || kind === 'application' || kind === 'kubernetes') return kindProtocols[kind]
+  if (isImplicit(kind) || kind === 'kubernetes') return kindProtocols[kind]
   const served = kindProtocols[kind]
   const caps = (t.capabilities ?? []).filter((p) => served.includes(p))
   if (caps.length) return caps
@@ -83,9 +91,11 @@ export function newGrant(kind: TargetKind = 'host', conditionsFrom?: PolicyGrant
     allow_file_transfer: false, idle_timeout_minutes: 15, max_session_minutes: null, time_windows: [], retention_days: null,
   }
   if (!conditionsFrom) return base
-  const { access, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
+  const { access, approvers, sign_in, require_mfa, allow_clipboard, allow_file_transfer, idle_timeout_minutes, max_session_minutes, time_windows, retention_days } = conditionsFrom
   return {
-    ...base, access, sign_in: kind === 'application' ? 'target' : sign_in, require_mfa, allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
+    ...base, access, sign_in: kind === 'application' || kind === 'cloud' ? 'target' : sign_in, require_mfa, allow_clipboard: kind !== 'cloud' && allow_clipboard, allow_file_transfer: filesMove(kind) && allow_file_transfer,
+    // Who decides is a condition too (ADR 0049), so "same conditions" keeps it.
+    ...(access === 'approval' && approvers?.length ? { approvers: approvers.map((a) => ({ ...a })) } : {}),
     ...(kind === 'application' && conditionsFrom.allow_devtools ? { allow_devtools: true } : {}),
     idle_timeout_minutes, max_session_minutes, time_windows: time_windows.map((w) => ({ ...w, days: [...w.days] })), retention_days,
   }
@@ -152,11 +162,13 @@ function protos(ps: Protocol[]): string {
  */
 export function grantSummary(g: PolicyGrant, nameOf: (id: string) => string): string {
   const kind = kinds.find((k) => k.kind === g.kind)?.label ?? g.kind
-  const implicit = g.kind === 'database' || g.kind === 'application'
+  const implicit = isImplicit(g.kind)
   const parts = [kind]
   if (g.targets.length) parts.push(g.targets.map((t) => (implicit ? nameOf(t.id) : `${nameOf(t.id)} (${protos(t.protocols)})`)).join(', '))
   if (g.tags) parts.push(implicit ? matchPhrase(g.tags.match) : `${matchPhrase(g.tags.match)} (${protos(g.tags.protocols)})`)
   parts.push(g.access === 'approval' ? 'Approval' : 'Standing')
+  // Named approvers decide an approval grant's requests (ADR 0049); unnamed, an administrator does.
+  if (g.access === 'approval' && g.approvers?.length) parts.push(g.approvers.length === 1 ? '1 approver' : `${g.approvers.length} approvers`)
   if (g.require_mfa) parts.push('MFA')
   if (g.sign_in === 'own') parts.push('own login')
   if (g.allow_clipboard) parts.push('clipboard')
@@ -167,7 +179,14 @@ export function grantSummary(g: PolicyGrant, nameOf: (id: string) => string): st
     if (g.cluster_scope) parts.push('cluster scope')
     if (g.port_forward) parts.push('port-forward')
   }
-  parts.push(`${g.idle_timeout_minutes}m`)
+  // A cloud session has no idle (ADR 0050): its length is the grant's maximum, or the role's.
+  if (g.kind === 'cloud') {
+    const doors = [g.cloud_console !== false ? 'console' : '', g.cloud_cli !== false ? 'command line' : ''].filter(Boolean)
+    parts.push(doors.length ? doors.join(' + ') : 'nothing to open')
+    parts.push(g.max_session_minutes ? `${g.max_session_minutes}m` : "role's max")
+  } else {
+    parts.push(`${g.idle_timeout_minutes}m`)
+  }
   if (g.time_windows.length) parts.push(g.time_windows.length === 1 ? '1 window' : `${g.time_windows.length} windows`)
   return parts.join(' · ')
 }
@@ -180,6 +199,9 @@ export interface GrantDraft {
   tagRows: TagRow[]
   tagProtocols: Protocol[]
   access: 'standing' | 'approval'
+  /** Who decides an approval grant's requests (ADR 0049): group ids and user ids; kept while standing, sent only for approval. */
+  approverGroups: string[]
+  approverUsers: string[]
   sign_in: 'target' | 'own'
   require_mfa: boolean
   allow_clipboard: boolean
@@ -189,6 +211,9 @@ export interface GrantDraft {
   namespaces: string
   cluster_scope: boolean
   port_forward: boolean
+  /** A cloud grant's doors (ADR 0050): the console sign-in and the command-line credentials. */
+  cloud_console: boolean
+  cloud_cli: boolean
   idle: string
   max: string
   retention: string
@@ -207,7 +232,7 @@ export interface KindChoice {
 
 /** The tag protocols a grant of kind starts with. */
 export function startProtocols(kind: TargetKind): Protocol[] {
-  return kind === 'database' || kind === 'application' ? [...kindProtocols[kind]] : ['ssh']
+  return isImplicit(kind) ? [...kindProtocols[kind]] : ['ssh']
 }
 
 /**
@@ -224,7 +249,7 @@ export function switchKind(d: GrantDraft, kind: TargetKind): GrantDraft {
   const chose = Object.keys(d.targets).length > 0 || d.tagProtocols.length !== start.length || d.tagProtocols.some((p) => !start.includes(p))
   const left: KindChoice | undefined = chose ? { kind: d.kind, targets: d.targets, tagProtocols: d.tagProtocols, sign_in: d.sign_in } : d.left
   if (left?.kind === kind) return { ...d, kind, targets: left.targets, tagProtocols: left.tagProtocols, sign_in: left.sign_in, left: undefined }
-  return { ...d, kind, targets: {}, tagProtocols: startProtocols(kind), sign_in: kind === 'application' ? 'target' : d.sign_in, left }
+  return { ...d, kind, targets: {}, tagProtocols: startProtocols(kind), sign_in: kind === 'application' || kind === 'cloud' ? 'target' : d.sign_in, left }
 }
 
 export function toDraft(g: PolicyGrant): GrantDraft {
@@ -232,10 +257,13 @@ export function toDraft(g: PolicyGrant): GrantDraft {
     id: g.id, kind: g.kind,
     targets: Object.fromEntries(g.targets.map((t) => [t.id, [...t.protocols]])),
     tagRows: matchToRows(g.tags?.match),
-    tagProtocols: g.tags ? [...g.tags.protocols] : g.kind === 'database' || g.kind === 'application' ? kindProtocols[g.kind] : ['ssh'],
+    tagProtocols: g.tags ? [...g.tags.protocols] : isImplicit(g.kind) ? kindProtocols[g.kind] : ['ssh'],
     access: g.access, sign_in: g.sign_in, require_mfa: g.require_mfa, allow_clipboard: g.allow_clipboard,
+    approverGroups: (g.approvers ?? []).filter((a) => a.kind === 'group').map((a) => a.id),
+    approverUsers: (g.approvers ?? []).filter((a) => a.kind === 'user').map((a) => a.id),
     allow_file_transfer: g.allow_file_transfer, allow_devtools: !!g.allow_devtools, idle: String(g.idle_timeout_minutes),
     namespaces: (g.namespaces ?? []).join(' '), cluster_scope: !!g.cluster_scope, port_forward: !!g.port_forward,
+    cloud_console: g.cloud_console ?? true, cloud_cli: g.cloud_cli ?? true,
     max: g.max_session_minutes ? String(g.max_session_minutes) : '', retention: g.retention_days ? String(g.retention_days) : '',
     windows: g.time_windows.map((w) => ({ ...w, days: [...w.days] })),
   }
@@ -247,7 +275,7 @@ export function toDraft(g: PolicyGrant): GrantDraft {
  * round trip.
  */
 export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered?: (id: string) => Protocol[]): { grant?: PolicyGrant; error?: string } {
-  const implicit = d.kind === 'database' || d.kind === 'application'
+  const implicit = isImplicit(d.kind)
   const targets = Object.entries(d.targets).map(([id, ps]) => ({ id, protocols: implicit ? kindProtocols[d.kind] : ps }))
   for (const t of targets) {
     if (t.protocols.length === 0) {
@@ -271,16 +299,22 @@ export function fromDraft(d: GrantDraft, nameOf: (id: string) => string, offered
   if (retention !== null && (!Number.isInteger(retention) || retention < 1 || retention > 3650)) return { error: 'keep recordings must be 1-3650 days' }
   const namespaces = d.kind === 'kubernetes' ? d.namespaces.split(/[\s,]+/).filter(Boolean) : []
   if (namespaces.some((ns) => !/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(ns))) return { error: 'a namespace is a DNS label: lowercase letters, digits and hyphens' }
+  // Approvers belong to an approval grant alone (ADR 0049); a standing grant
+  // keeps what was picked, unsent, for the switch back.
+  const approvers = d.access === 'approval' ? [...d.approverGroups.map((id) => ({ kind: 'group' as const, id })), ...d.approverUsers.map((id) => ({ kind: 'user' as const, id }))] : []
+  if (approvers.length > 32) return { error: 'at most 32 approvers' }
   return {
     grant: {
       ...(d.id ? { id: d.id } : {}),
       kind: d.kind, targets, ...(hasTags ? { tags: { match, protocols: tagProtocols } } : {}),
-      access: d.access, sign_in: d.kind === 'application' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
-      allow_clipboard: d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
+      access: d.access, ...(approvers.length ? { approvers } : {}), sign_in: d.kind === 'application' || d.kind === 'cloud' ? 'target' : d.sign_in, require_mfa: d.require_mfa,
+      allow_clipboard: d.kind !== 'cloud' && d.allow_clipboard, allow_file_transfer: filesMove(d.kind) && d.allow_file_transfer, idle_timeout_minutes: idle,
       ...(d.kind === 'application' && d.allow_devtools ? { allow_devtools: true } : {}),
       ...(namespaces.length ? { namespaces } : {}),
       ...(d.kind === 'kubernetes' && d.cluster_scope ? { cluster_scope: true } : {}),
       ...(d.kind === 'kubernetes' && d.port_forward ? { port_forward: true } : {}),
+      // A cloud grant's doors (ADR 0050), both sent: the server's default is open, so a closed one must be said.
+      ...(d.kind === 'cloud' ? { cloud_console: d.cloud_console, cloud_cli: d.cloud_cli } : {}),
       max_session_minutes: max, time_windows: d.windows.map((w) => ({ ...w, tz: w.tz || 'UTC' })), retention_days: retention,
     },
   }
@@ -374,7 +408,7 @@ export function extrasLine(r: Rollup): string {
 
 /** targetsCell is one grant's reach for the expanded table: the first few targets, then +N. */
 export function targetsCell(g: PolicyGrant, nameOf: (id: string) => string, first = 3): string {
-  const implicit = g.kind === 'database' || g.kind === 'application'
+  const implicit = isImplicit(g.kind)
   const parts: string[] = []
   if (g.targets.length) {
     const shown = g.targets.slice(0, first).map((t) => (implicit ? nameOf(t.id) : `${nameOf(t.id)} (${protos(t.protocols)})`))

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/audit"
@@ -36,13 +37,33 @@ type gw struct {
 	csrf   string
 	audit  *audit.Log
 	userCk *http.Cookie
+	logs   *syncBuf // what the gateway logged
+}
+
+// syncBuf is a buffer the handlers may write to from any goroutine.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 func newGW(t *testing.T) *gw {
 	t.Helper()
 	ctx := context.Background()
 	db := storetest.Open(t)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logs := &syncBuf{}
+	log := slog.New(slog.NewTextHandler(logs, nil))
 	kek, _ := crypto.NewLocalKEK(bytes.Repeat([]byte{9}, 32))
 	ring, err := keyring.Open(ctx, db, kek)
 	if err != nil {
@@ -68,7 +89,7 @@ func newGW(t *testing.T) *gw {
 	mux.HandleFunc("GET /api/v1/autoscaling-groups", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"items":[]}`) })
 	ci.UseMux(mux)
 	mw := &auth.Middleware{Sessions: sessions, Users: users, Log: log}
-	g := &gw{db: db, srv: mw.Authenticate(mw.CSRF(mux)), audit: al}
+	g := &gw{db: db, srv: mw.Authenticate(mw.CSRF(mux)), audit: al, logs: logs}
 	for name, role := range map[string]user.Role{"root": user.RoleAdmin, "ann": user.RoleUser} {
 		u := &user.User{Username: name, DisplayName: name, Roles: []user.Role{role}}
 		if err := users.Create(ctx, u); err != nil {
@@ -173,8 +194,19 @@ func TestExportImportRoundTrip(t *testing.T) {
 	// kube_impersonate would turn a shared identity into impersonation.
 	cluster := a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "prod-cluster", "kube_api_server": "https://10.0.0.20:6443", "kube_impersonate": false,
 		"credentials": map[string]string{"kube": a.credID(t, "cluster-sa")}})
+	// An approval grant naming its approvers (ADR 0049) travels whole too: a
+	// file that dropped them would import a grant any administrator decides.
 	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-cluster", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
-		"grants": []map[string]any{{"kind": "kubernetes", "targets": []map[string]any{{"id": cluster["id"], "protocols": []string{"kube"}}}, "namespaces": []string{"prod"}, "cluster_scope": true}}})
+		"grants": []map[string]any{{"kind": "kubernetes", "targets": []map[string]any{{"id": cluster["id"], "protocols": []string{"kube"}}}, "namespaces": []string{"prod"}, "cluster_scope": true,
+			"access": "approval", "approvers": []map[string]string{{"kind": "group", "id": grp["id"].(string)}}}}})
+	// A cloud account's role and a grant with the command line shut (ADR
+	// 0050). The role's ExternalId travels, so a gateway rebuilt from the
+	// file keeps the account's trust policy valid; a file that dropped the
+	// shut switch would import a grant that opens the command line.
+	role := a.json(t, "POST", "/api/v1/targets", map[string]any{"name": "prod-admin", "cloud_role_arn": "arn:aws:iam::123456789012:role/Admin", "cloud_account_alias": "prod",
+		"cloud_max_minutes": 90, "cloud_region": "eu-west-1"})
+	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-aws", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
+		"grants": []map[string]any{{"kind": "cloud", "targets": []map[string]any{{"id": role["id"], "protocols": []string{"cloud"}}}, "cloud_cli": false}}})
 
 	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
 	if code != 200 {
@@ -182,7 +214,10 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 	text := string(file)
 	for _, want := range []string{"zanskar: 1", "name: ops", "- ann", "name: web-1", "ssh: linux-key", "env: prod", "name: ops-web", "group: ops", "name: web-1", "allow_clipboard: true", "app_upstream: http://wiki.corp", "app_dependencies: origins",
-		"kube_api_server: https://10.0.0.20:6443", "kube_impersonate: false", "kube_platform: vanilla", "kube: cluster-sa", "kind: kubernetes", "namespaces: [prod]", "cluster_scope: true"} {
+		"kube_api_server: https://10.0.0.20:6443", "kube_impersonate: false", "kube_platform: vanilla", "kube: cluster-sa", "kind: kubernetes", "namespaces: [prod]", "cluster_scope: true",
+		"access: approval", "approvers:",
+		"name: prod-admin", "address: sts.eu-west-1.amazonaws.com", "cloud_platform: aws", "cloud_account_id: \"123456789012\"", "cloud_account_alias: prod", "cloud_role_arn: arn:aws:iam::123456789012:role/Admin",
+		"cloud_external_id: " + role["cloud_external_id"].(string), "cloud_max_minutes: 90", "cloud_region: eu-west-1", "kind: cloud", "cloud_console: true", "cloud_cli: false"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("the export lacks %q:\n%s", want, text)
 		}
@@ -194,14 +229,14 @@ func TestExportImportRoundTrip(t *testing.T) {
 	b := newGW(t)
 	// The plan first: everything is new, nothing changed yet.
 	code, out := b.do(t, "POST", "/api/v1/admin/config/import", file)
-	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 6 {
+	if code != 200 || !strings.Contains(string(out), `"applied":false`) || strings.Count(string(out), `"action":"create"`) != 8 {
 		t.Fatalf("plan: %d %s", code, out)
 	}
 	if n := count(t, b.db, "targets"); n != 0 {
 		t.Fatalf("a plan changed something: %d targets", n)
 	}
 	code, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
-	if code != 200 || strings.Count(string(out), `"applied":true`) != 7 {
+	if code != 200 || strings.Count(string(out), `"applied":true`) != 9 {
 		t.Fatalf("apply: %d %s", code, out)
 	}
 	// B now exports what A did.
@@ -218,17 +253,120 @@ func TestExportImportRoundTrip(t *testing.T) {
 	if ns, _ := json.Marshal(grant["namespaces"]); string(ns) != `["prod"]` || grant["cluster_scope"] != true || grant["port_forward"] == true {
 		t.Fatalf("B's grant: %v", grant)
 	}
+	if approvers, _ := grant["approvers"].([]any); len(approvers) != 1 || approvers[0].(map[string]any)["kind"] != "group" || approvers[0].(map[string]any)["id"] != b.named(t, "/api/v1/groups", "ops")["id"] {
+		t.Fatalf("B's grant approvers: %v", grant["approvers"])
+	}
+	// B's role carries A's ExternalId and the maximum, and B's cloud grant
+	// keeps the command line shut.
+	if r := b.named(t, "/api/v1/targets", "prod-admin"); r["cloud_external_id"] != role["cloud_external_id"] || r["cloud_max_minutes"] != float64(90) || r["cloud_account_id"] != "123456789012" || r["cloud_region"] != "eu-west-1" || r["cloud_platform"] != "aws" {
+		t.Fatalf("B's role: %v", r)
+	}
+	if g := b.named(t, "/api/v1/access-policies", "ops-aws")["grants"].([]any)[0].(map[string]any); g["cloud_console"] != true || g["cloud_cli"] != false {
+		t.Fatalf("B's cloud grant: %v", g)
+	}
 	// A second import changes nothing.
 	_, out = b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
 	if strings.Contains(string(out), `"action":"create"`) || strings.Contains(string(out), `"action":"update"`) {
 		t.Fatalf("a second import changed things: %s", out)
 	}
 	// Every change went through the API, so each is in the log as usual.
-	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 3 {
+	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.TargetCreate}); len(evs) != 4 {
 		t.Fatalf("target.create events: %d", len(evs))
 	}
 	if evs, _, _ := b.audit.List(context.Background(), audit.Filter{Action: audit.ConfigImport}); len(evs) != 2 {
 		t.Fatalf("config.import events: %d", len(evs))
+	}
+}
+
+// A hand-written file may leave a cloud role's platform and maximum and a
+// cloud grant's switches out (ADR 0050): the import fills the defaults the
+// gateway stores said, and a second import of the same file changes nothing.
+// Without the grant's defaults the plan read the gateway's stored true/true
+// against the file's nothing and planned an update every time (2026-11-17).
+// The rest a file spells as an export does (a grant's access, sign-in,
+// authenticator and idle time; a target's derived address and os_family),
+// the rule every kind has had since ADR 0043.
+func TestImportFillsCloudDefaults(t *testing.T) {
+	b := newGW(t)
+	file := []byte(`zanskar: 1
+groups:
+  - name: ops
+targets:
+  - name: prod-admin
+    address: sts.amazonaws.com
+    os_family: other
+    cloud_account_id: "123456789012"
+    cloud_role_arn: arn:aws:iam::123456789012:role/Admin
+    cloud_external_id: zanskar-0123456789abcdef0123456789abcdef
+policies:
+  - name: ops-aws
+    enabled: true
+    subjects:
+      - group: ops
+    grants:
+      - kind: cloud
+        targets:
+          - name: prod-admin
+            protocols: [cloud]
+        access: standing
+        sign_in: target
+        require_mfa: true
+        idle_timeout_minutes: 15
+`)
+	code, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
+	if code != 200 || strings.Count(string(out), `"action":"create"`) != 3 {
+		t.Fatalf("apply: %d %s", code, out)
+	}
+	if r := b.named(t, "/api/v1/targets", "prod-admin"); r["cloud_platform"] != "aws" || r["cloud_max_minutes"] != float64(60) || r["cloud_external_id"] != "zanskar-0123456789abcdef0123456789abcdef" || r["cloud_account_id"] != "123456789012" {
+		t.Fatalf("the role: %v", r)
+	}
+	if g := b.named(t, "/api/v1/access-policies", "ops-aws")["grants"].([]any)[0].(map[string]any); g["cloud_console"] != true || g["cloud_cli"] != true {
+		t.Fatalf("the grant: %v", g)
+	}
+	_, out = b.do(t, "POST", "/api/v1/admin/config/import", file)
+	if strings.Count(string(out), `"action":"unchanged"`) != 3 || strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a second import of the same file: %s", out)
+	}
+}
+
+// TestImportPlansAHandWrittenRoleUnchanged (review 2026-11-17, C7): a file
+// with a role's name, ARN, region and tags alone, as a hand writes it,
+// planned an update on every import, since the gateway derives the address
+// (the STS host), the account from the ARN, os other and mints the
+// ExternalId, none of which the file spells. The second import plans
+// nothing; a file that then changes the region plans the update it should.
+func TestImportPlansAHandWrittenRoleUnchanged(t *testing.T) {
+	b := newGW(t)
+	file := []byte(`zanskar: 1
+targets:
+  - name: prod-read
+    cloud_role_arn: arn:aws:iam::123456789012:role/ReadOnly
+    cloud_region: eu-west-1
+    tags:
+      account: prod
+`)
+	code, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file)
+	if code != 200 || strings.Count(string(out), `"action":"create"`) != 1 {
+		t.Fatalf("apply: %d %s", code, out)
+	}
+	r := b.named(t, "/api/v1/targets", "prod-read")
+	if r["address"] != "sts.eu-west-1.amazonaws.com" || r["os_family"] != "other" || r["cloud_account_id"] != "123456789012" || r["cloud_external_id"] == "" {
+		t.Fatalf("the role as stored: %v", r)
+	}
+	_, out = b.do(t, "POST", "/api/v1/admin/config/import", file)
+	if !strings.Contains(string(out), `"action":"unchanged"`) || strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a second import of the same file: %s", out)
+	}
+	// Applied again, nothing moves: the ExternalId the gateway minted stays.
+	if _, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file); strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a second apply: %s", out)
+	}
+	if again := b.named(t, "/api/v1/targets", "prod-read"); again["cloud_external_id"] != r["cloud_external_id"] {
+		t.Fatalf("the ExternalId moved: %v -> %v", r["cloud_external_id"], again["cloud_external_id"])
+	}
+	moved := []byte(strings.Replace(string(file), "eu-west-1", "eu-central-1", 1))
+	if _, out := b.do(t, "POST", "/api/v1/admin/config/import", moved); !strings.Contains(string(out), `"action":"update"`) {
+		t.Fatalf("a changed region plans no update: %s", out)
 	}
 }
 
@@ -307,4 +445,47 @@ func strip(s string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// TestExportLeavesOutAnApproverItCannotName (review R3): a grant keeps the
+// id of an approver deleted since it named them; the export leaves that one
+// out and says so in the log, rather than writing an empty name the import
+// would refuse. The file still imports.
+func TestExportLeavesOutAnApproverItCannotName(t *testing.T) {
+	a := newGW(t)
+	ctx := context.Background()
+	users := user.NewRepo(a.db)
+	gone := &user.User{Username: "gone", DisplayName: "Gone", Roles: []user.Role{user.RoleApprover}}
+	if err := users.Create(ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	grp := a.json(t, "POST", "/api/v1/groups", map[string]any{"name": "ops", "description": "on call"})
+	a.json(t, "POST", "/api/v1/access-policies", map[string]any{"name": "ops-prod", "subjects": []map[string]string{{"kind": "group", "id": grp["id"].(string)}},
+		"grants": []map[string]any{{"kind": "host", "tags": map[string]any{"match": map[string][]string{"env": {"prod"}}, "protocols": []string{"ssh"}},
+			"access": "approval", "approvers": []map[string]string{{"kind": "group", "id": grp["id"].(string)}, {"kind": "user", "id": gone.ID}}}}})
+	if err := users.Delete(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	code, file := a.do(t, "GET", "/api/v1/admin/config/export", nil)
+	if code != 200 {
+		t.Fatalf("export: %d %s", code, file)
+	}
+	text := string(file)
+	if !strings.Contains(text, "approvers:") || !strings.Contains(text, "- group: ops") || strings.Count(text, "- group: ops") != 2 {
+		t.Fatalf("the export should name the group as audience and approver:\n%s", text)
+	}
+	if strings.Contains(text, `user: ""`) || strings.Contains(text, "user: ''") || strings.Contains(text, "- user:") || strings.Contains(text, gone.ID) {
+		t.Fatalf("the export carries the deleted approver:\n%s", text)
+	}
+	if logs := a.logs.String(); !strings.Contains(logs, "left out") || !strings.Contains(logs, "policy=ops-prod") || !strings.Contains(logs, "id="+gone.ID) {
+		t.Fatalf("the export should say in the log what it left out:\n%s", logs)
+	}
+	b := newGW(t)
+	if code, out := b.do(t, "POST", "/api/v1/admin/config/import?apply=true", file); code != 200 || strings.Contains(string(out), `"problem"`) {
+		t.Fatalf("import of the export: %d %s", code, out)
+	}
+	grant := b.named(t, "/api/v1/access-policies", "ops-prod")["grants"].([]any)[0].(map[string]any)
+	if approvers, _ := grant["approvers"].([]any); len(approvers) != 1 || approvers[0].(map[string]any)["kind"] != "group" {
+		t.Fatalf("B's grant approvers: %v", grant["approvers"])
+	}
 }

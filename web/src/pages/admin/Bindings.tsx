@@ -22,6 +22,7 @@ const suitable: Record<Protocol, CredentialType[]> = {
   // A cluster's one credential sits on kube (ADR 0045); a pod shell uses it.
   kube: ['kube_token', 'kube_client_cert'],
   pod: [],
+  cloud: [], // a role in a cloud account binds no credential; its trust policy is the trust (ADR 0050)
 }
 
 /**

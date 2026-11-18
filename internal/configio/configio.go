@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -96,30 +97,39 @@ type (
 		Description string `json:"description"`
 	}
 	apiTarget struct {
-		ID              string            `json:"id"`
-		Name            string            `json:"name"`
-		Address         string            `json:"address"`
-		OSFamily        string            `json:"os_family"`
-		Engine          string            `json:"engine"`
-		EngineVersion   string            `json:"engine_version"`
-		DatabaseName    string            `json:"database_name"`
-		TLSMode         string            `json:"tls_mode"`
-		TLSCA           string            `json:"tls_ca"`
-		AppUpstream     string            `json:"app_upstream"`
-		AppEndpoints    []Endpoint        `json:"app_endpoints"`
-		AppDependencies string            `json:"app_dependencies"`
-		AppPrivate      *Private          `json:"app_private"`
-		KubeAPIServer   string            `json:"kube_api_server"`
-		KubeCA          string            `json:"kube_ca"`
-		KubePlatform    string            `json:"kube_platform"`
-		KubeImpersonate *bool             `json:"kube_impersonate"`
-		Ports           map[string]int    `json:"ports"`
-		Capabilities    []string          `json:"capabilities"`
-		Tags            map[string]string `json:"tags"`
-		Status          string            `json:"status"`
-		Notes           string            `json:"notes"`
-		RetentionDays   *int              `json:"retention_days"`
-		Credentials     map[string]string `json:"credentials"`
+		ID              string     `json:"id"`
+		Name            string     `json:"name"`
+		Address         string     `json:"address"`
+		OSFamily        string     `json:"os_family"`
+		Engine          string     `json:"engine"`
+		EngineVersion   string     `json:"engine_version"`
+		DatabaseName    string     `json:"database_name"`
+		TLSMode         string     `json:"tls_mode"`
+		TLSCA           string     `json:"tls_ca"`
+		AppUpstream     string     `json:"app_upstream"`
+		AppEndpoints    []Endpoint `json:"app_endpoints"`
+		AppDependencies string     `json:"app_dependencies"`
+		AppPrivate      *Private   `json:"app_private"`
+		KubeAPIServer   string     `json:"kube_api_server"`
+		KubeCA          string     `json:"kube_ca"`
+		KubePlatform    string     `json:"kube_platform"`
+		KubeImpersonate *bool      `json:"kube_impersonate"`
+		// A cloud account's role (ADR 0050), the seven fields whole: a copy
+		// forgotten here would import the role as a host.
+		CloudPlatform     string            `json:"cloud_platform"`
+		CloudAccountID    string            `json:"cloud_account_id"`
+		CloudAccountAlias string            `json:"cloud_account_alias"`
+		CloudRoleARN      string            `json:"cloud_role_arn"`
+		CloudExternalID   string            `json:"cloud_external_id"`
+		CloudMaxMinutes   int               `json:"cloud_max_minutes"`
+		CloudRegion       string            `json:"cloud_region"`
+		Ports             map[string]int    `json:"ports"`
+		Capabilities      []string          `json:"capabilities"`
+		Tags              map[string]string `json:"tags"`
+		Status            string            `json:"status"`
+		Notes             string            `json:"notes"`
+		RetentionDays     *int              `json:"retention_days"`
+		Credentials       map[string]string `json:"credentials"`
 	}
 	apiSubject struct {
 		Kind string `json:"kind"`
@@ -147,6 +157,11 @@ type (
 		Namespaces         []string         `json:"namespaces,omitempty"`
 		ClusterScope       bool             `json:"cluster_scope,omitempty"`
 		PortForward        bool             `json:"port_forward,omitempty"`
+		Approvers          []apiSubject     `json:"approvers,omitempty"`
+		// A cloud grant's switches (ADR 0050): sent only when set, since the
+		// gateway refuses them on any other kind.
+		CloudConsole *bool `json:"cloud_console,omitempty"`
+		CloudCLI     *bool `json:"cloud_cli,omitempty"`
 	}
 	apiPolicy struct {
 		ID          string       `json:"id,omitempty"`
@@ -167,6 +182,15 @@ type state struct {
 	targets                  map[string]apiTarget
 	policies                 map[string]apiPolicy
 	byID                     map[string]string // any id -> its name
+	// log hears what an export leaves out; nil says nothing.
+	log *slog.Logger
+}
+
+// warn logs at warn when the state has a logger.
+func (s *state) warn(msg string, args ...any) {
+	if s.log != nil {
+		s.log.Warn(msg, args...)
+	}
 }
 
 func read(a api) (*state, error) {
@@ -258,6 +282,8 @@ func (s *state) targetDoc(t apiTarget) Target {
 	return Target{Name: t.Name, Address: t.Address, OSFamily: t.OSFamily, Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName,
 		TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
 		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubePlatform: t.KubePlatform, KubeImpersonate: t.KubeImpersonate,
+		CloudPlatform: t.CloudPlatform, CloudAccountID: t.CloudAccountID, CloudAccountAlias: t.CloudAccountAlias, CloudRoleARN: t.CloudRoleARN,
+		CloudExternalID: t.CloudExternalID, CloudMaxMinutes: t.CloudMaxMinutes, CloudRegion: t.CloudRegion,
 		Ports: emptyNil(t.Ports), Tags: emptyNil(t.Tags), Status: t.Status, Notes: t.Notes, RetentionDays: t.RetentionDays, Credentials: emptyNil(creds)}
 }
 
@@ -270,17 +296,54 @@ func (s *state) policyDoc(p apiPolicy) Policy {
 			out.Subjects = append(out.Subjects, Subject{User: s.byID[sub.ID]})
 		}
 	}
-	for _, g := range p.Grants {
+	for i, g := range p.Grants {
 		dg := Grant{Kind: g.Kind, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA, AllowClipboard: g.AllowClipboard,
 			AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes,
 			MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
-			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward}
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward, CloudConsole: g.CloudConsole, CloudCLI: g.CloudCLI}
 		for _, gt := range g.Targets {
 			dg.Targets = append(dg.Targets, GrantTarget{Name: s.byID[gt.ID], Protocols: gt.Protocols})
+		}
+		for _, a := range g.Approvers {
+			name, ok := s.byID[a.ID]
+			if !ok {
+				// A user or group deleted since the grant named them (the
+				// grants JSON keeps the id): left out of the file rather than
+				// written as an empty name the import would refuse, and said
+				// here, since the file then names one approver fewer.
+				s.warn("config export: an approver the gateway cannot name was left out", "policy", p.Name, "grant", i+1, "kind", a.Kind, "id", a.ID)
+				continue
+			}
+			if a.Kind == "group" {
+				dg.Approvers = append(dg.Approvers, Subject{Group: name})
+			} else {
+				dg.Approvers = append(dg.Approvers, Subject{User: name})
+			}
 		}
 		out.Grants = append(out.Grants, dg)
 	}
 	return out
+}
+
+// subjectID is a file's group or user, by name, as the API wants it; the
+// second value says what is wrong when it is not here.
+func (s *state) subjectID(sub Subject, what string) (apiSubject, string) {
+	switch {
+	case sub.Group != "" && sub.User == "":
+		g, ok := s.groups[sub.Group]
+		if !ok {
+			return apiSubject{}, fmt.Sprintf("group %q does not exist", sub.Group)
+		}
+		return apiSubject{Kind: "group", ID: g.ID}, ""
+	case sub.User != "" && sub.Group == "":
+		id, ok := s.users[sub.User]
+		if !ok {
+			return apiSubject{}, fmt.Sprintf("user %q does not exist on this gateway", sub.User)
+		}
+		return apiSubject{Kind: "user", ID: id}, ""
+	default:
+		return apiSubject{}, what + " names exactly one of group or user"
+	}
 }
 
 // Change is one thing an import does, or would.
@@ -313,6 +376,8 @@ func (s *state) writeTarget(t Target) (map[string]any, string) {
 	return map[string]any{"name": t.Name, "address": t.Address, "os_family": t.OSFamily, "engine": t.Engine, "engine_version": t.EngineVersion,
 		"database_name": t.DatabaseName, "tls_mode": t.TLSMode, "tls_ca": t.TLSCA, "app_upstream": t.AppUpstream, "app_endpoints": t.AppEndpoints, "app_dependencies": t.AppDependencies, "app_private": t.AppPrivate,
 		"kube_api_server": t.KubeAPIServer, "kube_ca": t.KubeCA, "kube_platform": t.KubePlatform, "kube_impersonate": t.KubeImpersonate,
+		"cloud_platform": t.CloudPlatform, "cloud_account_id": t.CloudAccountID, "cloud_account_alias": t.CloudAccountAlias, "cloud_role_arn": t.CloudRoleARN,
+		"cloud_external_id": t.CloudExternalID, "cloud_max_minutes": t.CloudMaxMinutes, "cloud_region": t.CloudRegion,
 		"ports": t.Ports, "tags": t.Tags, "status": status, "notes": t.Notes, "retention_days": t.RetentionDays, "credentials": creds}, ""
 }
 
@@ -348,7 +413,7 @@ func (s *state) writePolicy(p Policy, old *apiPolicy) (apiPolicy, string) {
 		ag := apiGrant{Kind: g.Kind, Targets: []apiGrantTarget{}, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn, RequireMFA: g.RequireMFA,
 			AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer, AllowDevTools: g.AllowDevTools,
 			IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
-			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward}
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward, CloudConsole: g.CloudConsole, CloudCLI: g.CloudCLI}
 		if ag.TimeWindows == nil {
 			ag.TimeWindows = []TimeWindow{}
 		}
@@ -369,6 +434,13 @@ func (s *state) writePolicy(p Policy, old *apiPolicy) (apiPolicy, string) {
 				return out, fmt.Sprintf("grant %d names %q, which does not exist", i+1, gt.Name)
 			}
 			ag.Targets = append(ag.Targets, apiGrantTarget{ID: id, Protocols: gt.Protocols})
+		}
+		for _, a := range g.Approvers {
+			sub, problem := s.subjectID(a, fmt.Sprintf("grant %d: an approver", i+1))
+			if problem != "" {
+				return out, fmt.Sprintf("grant %d: approver: %s", i+1, problem)
+			}
+			ag.Approvers = append(ag.Approvers, sub)
 		}
 		out.Grants = append(out.Grants, ag)
 	}

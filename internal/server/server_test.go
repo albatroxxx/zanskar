@@ -129,4 +129,9 @@ func TestSPAFallbackAndCSP(t *testing.T) {
 	if csp := rr.Header().Get("Content-Security-Policy"); !strings.HasPrefix(csp, "default-src 'none'; frame-ancestors") {
 		t.Fatalf("api csp: %q", csp)
 	}
+	// The console sign-in's hosts (C1) are the SPA's business: the API's
+	// policy sends forms nowhere but our origin.
+	if csp := rr.Header().Get("Content-Security-Policy"); !strings.HasSuffix(csp, "form-action 'self'") || strings.Contains(csp, "amazon") {
+		t.Fatalf("api csp form-action: %q", csp)
+	}
 }

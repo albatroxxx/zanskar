@@ -60,6 +60,8 @@ info:
     - `auditor`: reads the audit log, verifies the hash chain, and views recordings, but cannot
       change configuration. Every recording view and audit query is itself recorded in
       `recording_views` and in the audit log, whichever role performs it.
+    - `approver`: decides the access requests a policy grant names them for (ADR 0049); holds no
+      access and no review of its own.
     - `user`: sees the targets their groups' policies grant and opens sessions to them.
 
     Endpoints are tagged by the role that may call them. A caller holding several roles may call
@@ -111,6 +113,12 @@ tags:
     description: Endpoints for the `admin` role.
   - name: auditor
     description: Read-only review endpoints, callable by `auditor` and `admin`.
+  - name: approver
+    description: >-
+      The approval queue and its decisions (ADR 0049), callable by `approver` and `admin`. The
+      route admits the role; which request a caller may decide is the handler's check: where a
+      grant names approvers they alone approve and deny, never their own request, and an
+      administrator revokes any grant; where none is named, any administrator decides.
   - name: websocket
     description: Session transport endpoints (documented, not callable as REST).
 
@@ -923,6 +931,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            `no_approver`: a grant names approvers for this request and none but the caller could
+            decide it (ADR 0049); the message names the policy. An administrator names another
+            approver, or none.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     get:
       tags: [user]
       summary: List the caller's own access requests
@@ -941,6 +958,56 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/AccessRequest"
+  /me/access-requests/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [user]
+      summary: Withdraw the caller's own pending request
+      description: >-
+        A pending request of the caller's becomes `cancelled` (ADR 0049); the event is
+        `access.request.cancel`. Another person's request is not found.
+      responses:
+        "200":
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not pending; the message names its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /me/access-requests/{id}/end:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [user]
+      summary: End the caller's own active grant
+      description: >-
+        A revoke by the requester (ADR 0049): the grant becomes `revoked`, the approver's note is
+        kept, and the sessions it admitted end as `policy_revoked` unless standing access still
+        covers them. The event is `access.request.revoke` with the requester as actor and `by:
+        requester` in its details. Another person's grant is not found.
+      responses:
+        "200":
+          description: Ended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request is not an active grant; the message names its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /me/access:
     get:
       tags: [user]
@@ -1021,6 +1088,16 @@ paths:
         zanskar:<group>`). The session ends after the policy's idle time without a request, at
         its maximum, or when an administrator ends it; every request that names a resource is
         one line of its recording.
+
+        Protocol `cloud` (a cloud account's role, ADR 0050) has no WebSocket either: the session
+        starts here and the answer's `cloud` object carries its session token, the AWS config
+        profile stanza that fetches credentials from `GET /cloud/{id}/credentials`, and which of
+        the two doors the grants open. It needs the gateway's public address too
+        (`501 protocol_unavailable` without). The session runs for the target's
+        `cloud_max_minutes`, or the grant's maximum where shorter, with no idle clock, and ends
+        at that maximum, on terminate, on a policy change that no longer admits it or changes its
+        switches, or when the role's account, ARN or ExternalId is edited. Each credential issue
+        and console sign-in is a line of its recording and an audit event.
       requestBody:
         required: true
         content:
@@ -1175,6 +1252,113 @@ paths:
                               additionalProperties: true
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /cloud/{id}/credentials:
+    get:
+      tags: [user]
+      summary: A cloud session's command-line credentials
+      security: []
+      description: >
+        The AWS `credential_process` answer for the cloud session named by the path (ADR 0050, 3),
+        opened by the session's own token in `Authorization: Bearer` and nothing else; no cookie
+        is read. The gateway assumes the role for fifteen minutes as the person (source identity
+        their username, session name `zanskar-<session id>`, tags `zanskar:user` and
+        `zanskar:session`), hands the same credentials out until three minutes before they end,
+        then mints again; each fresh mint is a line of the recording and a
+        `session.cloud.credentials` event, a reuse is silent. `Expiration` never passes the
+        session's end, where the route refuses; the credentials themselves run to their own
+        end, which the recording says on a terminate.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The credentials, as the AWS CLI and SDKs read them.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [Version, AccessKeyId, SecretAccessKey, SessionToken, Expiration]
+                properties:
+                  Version:
+                    type: integer
+                    enum: [1]
+                  AccessKeyId:
+                    type: string
+                  SecretAccessKey:
+                    type: string
+                  SessionToken:
+                    type: string
+                  Expiration:
+                    type: string
+                    format: date-time
+        "401":
+          description: The token does not open a live cloud session here (`invalid_token`); nothing more is said.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: The grant shuts the command line (`cli_off`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The session has ended (`session_ended`); connect again from the portal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: STS refused the mint (`mint_failed`), in Zanskar's words.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /cloud/{id}/console:
+    post:
+      tags: [user]
+      summary: A cloud session's console sign-in
+      description: >
+        For the session's own person, signed in to the portal (ADR 0050, 3): the gateway assumes
+        the role for the session's remaining minutes, exchanges the credentials at AWS's
+        federation endpoint for a sign-in token, and answers the `login` form the portal POSTs
+        into a new tab. The URL is never built as a GET a browser would keep. May be asked again
+        while the session lives; each issue is a recording line and a `session.cloud.console`
+        event carrying `console_until`, never the token. The console session runs to
+        `console_until` whatever ends the Zanskar session.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The form.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudConsole"
+        "403":
+          description: The grant shuts the console (`console_off`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No live cloud session of the caller's has that id (`not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The session has ended (`session_ended`); connect again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: STS refused the mint (`mint_failed`) or the federation endpoint the exchange (`console_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /sessions/{id}/failover:
     post:
       tags: [user]
@@ -2732,7 +2916,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [host, database, application, kubernetes]
+            enum: [host, database, application, kubernetes, cloud]
           description: Only hosts, only database targets (ADR 0017), only applications (ADR 0034), or only Kubernetes clusters (ADR 0045).
         - name: platform
           in: query
@@ -3339,6 +3523,67 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /targets/{id}/cloud/setup:
+    get:
+      tags: [admin]
+      summary: What a cloud account's role must trust
+      description: >
+        The trust policy the role's account pastes (ADR 0050, 1): this gateway's principal, the
+        actions a session's mint needs (`sts:AssumeRole`, `sts:SetSourceIdentity`,
+        `sts:TagSession`) and the ExternalId condition; the permissions policy the gateway's read
+        of a session's activity needs (phase C: `cloudtrail:LookupEvents`); and the AWS CLI lines
+        and the CloudFormation template that put both on the role. While the gateway's own
+        principal is unknown the answer is `pending` with an empty `trust_policy`, never a
+        placeholder. Not audited: it holds no secret and changes nothing.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The pastes, or pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudSetup"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The target is not a cloud account's role (`not_a_cloud_role`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /targets/{id}/cloud/test:
+    post:
+      tags: [admin]
+      summary: Test a cloud account's role
+      description: >
+        Assumes the role once as a session would (ADR 0050, 1): with the ExternalId, a test
+        source identity and tag, for the target's `cloud_max_minutes`; then asks STS who the
+        credentials are. The answer names the stage that refused: `assume` (the trust policy, the
+        ExternalId, or `sts:SetSourceIdentity`/`sts:TagSession` missing), `duration` (above the
+        role's maximum session; lower `cloud_max_minutes`), `identity` (the credentials cannot
+        call `sts:GetCallerIdentity`), `lookup` (CloudTrail failed otherwise than by a refusal).
+        Then one `LookupEvents` call with the same credentials says whether the role may read the
+        account's CloudTrail for a session's activity (phase C): `lookup_events` true or false,
+        `ok` true either way, the message saying when the activity is not read. Nothing is
+        recorded on the target. Audited as `target.cloud.test`.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: "The outcome; `ok: false` with a `stage` is an answer, not an error."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudTest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The target is not a cloud account's role (`not_a_cloud_role`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /targets/{id}/certificate/trust:
     post:
       tags: [admin]
@@ -3559,15 +3804,31 @@ paths:
 
   /access-requests:
     get:
-      tags: [admin]
+      tags: [admin, approver]
       summary: List access requests
-      description: The approval queue and its history. Filter by `status` to show, for example, only what is pending.
+      description: >-
+        The approval queue and its history. Filter by `status` to show, for example, only what is
+        pending. An administrator without `scope` sees every request; `scope=mine` (an approver's
+        view, whether or not they ask for it; an administrator's when asked) is the pending requests
+        the caller is named to decide, the active grants whose deciders include the caller as the
+        policies stand now (the ones they may revoke, whoever approved them), and the requests they
+        decided that no longer run (ADR 0049). A pending request carries its `approvers`, `named`
+        and `may_decide`.
       parameters:
         - name: status
           in: query
           description: Restrict to one lifecycle state.
           schema:
             $ref: "#/components/schemas/AccessRequestStatus"
+        - name: scope
+          in: query
+          description: >-
+            `mine`: the pending requests the caller is named to decide, the active grants they may
+            revoke, and the requests they decided once those no longer run. With `status=approved`,
+            the active grants alone.
+          schema:
+            type: string
+            enum: [mine]
       responses:
         "200":
           description: Access requests, newest first (up to 500).
@@ -3588,12 +3849,14 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     get:
-      tags: [admin]
+      tags: [admin, approver]
       summary: One access request
       description: >-
-        A single request, whatever its status, with the names resolved as in the list. A
-        notification's link opens it (ADR 0039 amendment): approve it while it waits, or see
-        who decided it and when.
+        A single request, whatever its status, with the names resolved as in the list and its
+        `approvers`, `named` and `may_decide` filled. A notification's link opens it (ADR 0039
+        amendment): approve it while it waits, or see who decided it and when. An approver reads
+        the requests they are named for or decided; any other is not found, as a requester's read
+        of another person's is.
       responses:
         "200":
           description: The request.
@@ -3607,7 +3870,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     post:
-      tags: [admin]
+      tags: [admin, approver]
       summary: Approve a pending request
       description: >-
         Turns a pending request into a time-bounded grant. Eligibility and the duration cap are
@@ -3638,9 +3901,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: >-
-            `step_up_required`: the setting *Approving asks for a code* is on, the approver has an
-            authenticator, and the session has not proved a code in the last 5 minutes. Prove one at
-            `POST /auth/mfa/step-up` and approve again. The request stays pending.
+            Who may decide (ADR 0049): `approvers_named`, the request has named approvers and an
+            administrator is not one of them; `forbidden`, the caller is not named for it (or no
+            one is, and the caller is not an administrator); `own_request`, nobody decides their
+            own. `step_up_required`: the setting *Approving asks for a code* is on, the approver
+            has an authenticator, and the session has not proved a code in the last 5 minutes.
+            Prove one at `POST /auth/mfa/step-up` and approve again. The request stays pending.
           content:
             application/json:
               schema:
@@ -3659,7 +3925,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     post:
-      tags: [admin]
+      tags: [admin, approver]
       summary: Deny a pending request
       requestBody:
         required: false
@@ -3674,6 +3940,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "403":
+          description: "`approvers_named`, `forbidden` or `own_request`, as for approve (ADR 0049)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -3686,9 +3958,13 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Id"
     post:
-      tags: [admin]
+      tags: [admin, approver]
       summary: Revoke an active grant
-      description: Ends an approved grant early. `/connect` stops issuing tickets for it at once, and the sessions the grant admitted end as `policy_revoked` unless standing access still covers them; the audit event counts them as `live_sessions_ended`.
+      description: >-
+        Ends an approved grant early. `/connect` stops issuing tickets for it at once, and the
+        sessions the grant admitted end as `policy_revoked` unless standing access still covers
+        them; the audit event counts them as `live_sessions_ended`. An administrator revokes any
+        grant; an approver, the grants they are named for, never their own (ADR 0049).
       requestBody:
         required: false
         content:
@@ -3702,6 +3978,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccessRequest"
+        "403":
+          description: "`forbidden`: the approver is not named for this request; `own_request`: it is their own."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -4199,6 +4481,51 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: Session already ended (`already_ended`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /sessions/{id}/activity:
+    post:
+      tags: [auditor]
+      summary: Read a live cloud session's activity now
+      description: >
+        A cloud session's activity (ADR 0050, phase C): the gateway assumes the enrolled role under
+        its own session name (`zanskar-gateway-audit`), asks CloudTrail's `LookupEvents` for the
+        session's role session name over the session so far, and appends what is new to the
+        session's recording as lines (time, service and call, read-only or write, the resources
+        named) under a header saying how many and that events arrive up to 15 minutes late. The
+        same read runs once more by itself 15 minutes after the session ends, before its recording
+        is finished. For administrators and auditors alike. Audited as `session.cloud.activity`
+        with the count; a refusal is audited as a failure.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The events appended by this read and the end of the window it covered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudActivity"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The session is not a cloud session (`not_cloud`), or is open but not live on this gateway (`not_live`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The session has ended (`session_ended`); its activity is in the recording.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: >-
+            CloudTrail could not be read: the role lacks `cloudtrail:LookupEvents` (`lookup_denied`;
+            the Setup's activity policy adds it), or AWS refused or could not be reached
+            (`activity_failed`). Said on the recording as `activity not read`.
           content:
             application/json:
               schema:
@@ -6043,7 +6370,7 @@ components:
       description: RFC 3339, UTC.
     Role:
       type: string
-      enum: [admin, auditor, user]
+      enum: [admin, auditor, approver, user]
     UserStatus:
       type: string
       enum: [active, disabled, locked]
@@ -6059,7 +6386,7 @@ components:
         How a target is reached. `database` is brokered access to a database target (ADR 0017);
         `http` is a web application opened in an isolated browser beside the gateway and
         streamed like a desktop (ADR 0034); it takes a ticket and connects on `/ws/desktop`.
-      enum: [ssh, rdp, vnc, winrm, database, http, kube, pod]
+      enum: [ssh, rdp, vnc, winrm, database, http, kube, pod, cloud]
     CredentialType:
       type: string
       description: >-
@@ -6665,6 +6992,17 @@ components:
           additionalProperties:
             type: string
           description: External group (claim value, or LDAP group DN or name) to Zanskar group id, applied at each sign-in.
+        approver_groups:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            maxLength: 256
+          description: |
+            External groups (written as `group_mapping` keys are) whose members hold the `approver` role
+            (ADR 0049). A provider that lists any owns the role for the accounts that sign in through it:
+            each sign-in grants it to a member of one and withdraws it from a holder in none. Not applied by
+            the directory sync or a SCIM push, which carry no groups.
         auto_provision:
           type: boolean
           description: Create an account for a person the provider asserts and Zanskar does not know, at sign-in or by the sync.
@@ -7066,6 +7404,38 @@ components:
             Default true: every request goes to the cluster as the person (`Impersonate-User`, their
             Zanskar groups), so the cluster's RBAC decides and its audit log names them. False, every
             session acts as the credential itself, which the console calls a shared identity.
+        cloud_platform:
+          type: string
+          enum: [aws]
+          description: >-
+            A cloud account's role (ADR 0050), its platform. Absent on every other kind, as
+            every `cloud_` field is.
+        cloud_account_id:
+          type: string
+          description: The 12-digit account the role is in, read from `cloud_role_arn`.
+        cloud_account_alias:
+          type: string
+          description: How people know the account, at most 64 characters; the portal groups roles under it.
+        cloud_role_arn:
+          type: string
+          description: >-
+            Set, the target is a cloud account's role: the IAM role ARN the gateway assumes for the
+            person. `address` is the STS endpoint the gateway reaches for it. It serves `cloud` and
+            binds no credential; the role's trust policy is the trust (`GET /targets/{id}/cloud/setup`).
+        cloud_external_id:
+          type: string
+          description: >-
+            The ExternalId the role's trust policy carries, minted by the gateway on create
+            (`zanskar-` and 32 hex characters) and fixed after: an edit that changes it is
+            `400 external_id_fixed`.
+        cloud_max_minutes:
+          type: integer
+          minimum: 15
+          maximum: 720
+          description: The longest a session on the role runs; 60 unless set. The grant's maximum caps it where shorter.
+        cloud_region:
+          type: string
+          description: Where the console opens and STS is reached; absent for the global console.
         os_family:
           $ref: "#/components/schemas/OsFamily"
         ports:
@@ -7210,6 +7580,42 @@ components:
           enum: [vanilla, eks, gke, aks]
           default: vanilla
           description: Vanilla takes a kube_token or kube_client_cert on the kube slot; eks, gke and aks a cloud role (adapters, ADR 0045 8). Clusters only.
+        cloud_role_arn:
+          type: string
+          description: >-
+            Makes the target a cloud account's role (ADR 0050): an IAM role ARN
+            (`arn:aws:iam::<account>:role/<name>`) in the `aws` partition; a GovCloud or China
+            role, or a region of theirs, is `400` until their sign-in and console endpoints are
+            built. Exclusive with `engine`, `app_upstream` and `kube_api_server`; `address`,
+            `os_family` and `capabilities` are set from it. Ports are refused, and a credential
+            on any slot is `400 no_credential_slot`.
+        cloud_platform:
+          type: string
+          enum: [aws]
+          default: aws
+          description: Roles only.
+        cloud_account_id:
+          type: string
+          description: The 12-digit account; absent, read from the ARN, and refused when it is not the ARN's.
+        cloud_account_alias:
+          type: string
+          maxLength: 64
+          description: How people know the account. Roles only.
+        cloud_external_id:
+          type: string
+          description: >-
+            Absent or empty on create, the gateway mints one; on an update, absent keeps the
+            minted one and a different value is `400 external_id_fixed`. A configuration file
+            carries it so a rebuilt gateway keeps the accounts' trust policies valid.
+        cloud_max_minutes:
+          type: integer
+          minimum: 15
+          maximum: 720
+          default: 60
+          description: The longest a session on the role runs. Roles only.
+        cloud_region:
+          type: string
+          description: Where the console opens and STS is reached; empty for the global console. Roles only.
         app_private:
           allOf:
             - $ref: "#/components/schemas/AppPrivate"
@@ -7356,11 +7762,12 @@ components:
       type: string
       description: >-
         What a grant gives access to (ADR 0036). A target's kind is derived, never stored: a
-        target with an `engine` is a `database`, one with an `app_upstream` an `application`, any
-        other a `host`; an autoscaling group is `autoscaling`. Each kind serves its own protocols
-        and no others: `host` and `autoscaling` ssh, rdp, vnc and winrm; `database` database;
-        `application` http.
-      enum: [host, database, application, autoscaling, kubernetes]
+        target with an `engine` is a `database`, one with an `app_upstream` an `application`, one
+        with a `kube_api_server` a `kubernetes` cluster, one with a `cloud_role_arn` a `cloud`
+        account's role (ADR 0050), any other a `host`; an autoscaling group is `autoscaling`.
+        Each kind serves its own protocols and no others: `host` and `autoscaling` ssh, rdp, vnc
+        and winrm; `database` database; `application` http; `kubernetes` kube; `cloud` cloud.
+      enum: [host, database, application, autoscaling, kubernetes, cloud]
     PolicyReview:
       type: object
       required: [policy, subjects, due]
@@ -7569,6 +7976,31 @@ components:
           type: boolean
           default: false
           description: Admits `kubectl port-forward`. Kubernetes grants only.
+        cloud_console:
+          type: boolean
+          default: true
+          description: >-
+            A cloud grant's sessions may open the account's console (ADR 0050). Absent, on; the
+            stored grant says it. Where grants overlap, a session has the console only if every
+            deciding grant allows it. Cloud grants only; both switches off is refused.
+        cloud_cli:
+          type: boolean
+          default: true
+          description: >-
+            A cloud grant's sessions may take command-line credentials (ADR 0050). Absent, on; the
+            strictest across the deciding grants holds. Cloud grants only.
+        approvers:
+          type: array
+          maxItems: 32
+          description: >-
+            The groups and users who decide the requests this grant makes people eligible for
+            (ADR 0049), none twice; `approval` grants only (`400 approvers_without_approval`
+            otherwise). A user named must hold the approver role (`422 not_an_approver`) and exist
+            (`422 invalid_approver`); a group is not inspected, and a member without the role
+            decides nothing. Empty or absent leaves the decision to any administrator. Where a
+            request is covered by several approval grants, its approvers are the union of theirs.
+          items:
+            $ref: "#/components/schemas/PolicySubject"
         retention_days:
           type: [integer, "null"]
           minimum: 1
@@ -7705,7 +8137,7 @@ components:
 
     AccessRequestStatus:
       type: string
-      enum: [pending, approved, denied, expired, revoked]
+      enum: [pending, approved, denied, expired, revoked, cancelled]
     APIToken:
       type: object
       description: An API token as listed (ADR 0044); never its secret.
@@ -7799,7 +8231,35 @@ components:
           $ref: "#/components/schemas/AccessRequestStatus"
         approver_user_id:
           type: string
-          description: The admin who approved or denied the request.
+          description: The administrator or approver who approved or denied the request.
+        approvers:
+          type: array
+          description: >-
+            Who is named to decide this request (ADR 0049): the designation of the approval grants
+            that cover it, each a group or a user with its name resolved when read. Filled for a
+            pending request in a list and for any request read on its own; empty otherwise.
+          items:
+            type: object
+            required: [kind, id]
+            properties:
+              kind:
+                type: string
+                enum: [group, user]
+              id:
+                type: string
+              name:
+                type: string
+                description: The group's name or the user's username; absent when it is gone.
+        named:
+          type: boolean
+          description: Whether anyone is named to decide it; false leaves it to any administrator.
+        may_decide:
+          type: boolean
+          description: >-
+            Whether the caller who read it may approve or deny it now (ADR 0049): a pending request
+            nobody is named for, for an administrator; a pending request the caller is named for,
+            an administrator among the named included, unless it is the caller's own. False once
+            decided. The console draws Approve and Deny from this.
         decision_note:
           type: string
           description: Optional note the approver left with the decision.
@@ -8155,16 +8615,24 @@ components:
     # ---------------------------------------------------------------- user-facing targets and connect
     ReachableTarget:
       type: object
-      description: A target, autoscaling group, application or Kubernetes cluster the caller may reach, as returned by `GET /me/targets`.
+      description: A target, autoscaling group, application, Kubernetes cluster or cloud account's role the caller may reach, as returned by `GET /me/targets`.
       required: [kind, id, name, os_family, tags, capabilities, allowed_protocols, host_key_ready]
       properties:
         kind:
           type: string
-          enum: [target, asg, application, cluster]
+          enum: [target, asg, application, cluster, cloud]
         platform:
           type: string
           enum: [vanilla, eks, gke, aks]
           description: A cluster's platform (ADR 0048); clusters only.
+        unavailable:
+          type: string
+          description: >-
+            Why no session can start on this gateway for a cluster or a cloud role (the public
+            address is unset), so the portal greys the button and says so before a click. Absent
+            when one can.
+        cloud:
+          $ref: "#/components/schemas/ReachableCloud"
         id:
           type: string
         name:
@@ -8230,6 +8698,32 @@ components:
         instance_count:
           type: integer
           description: Total instances in the group. Present only for autoscaling-group rows (`kind` is `asg`).
+    ReachableCloud:
+      type: object
+      description: >-
+        A cloud account's role as the portal shows it (ADR 0050): where it is, and which of the
+        two doors the caller's grants open, the strictest across the grants that admit them. The
+        role's ARN stays on the gateway. Present only when `kind` is `cloud`.
+      required: [account_id, role_name, console, cli]
+      properties:
+        account_id:
+          type: string
+          description: The 12-digit account.
+        account_alias:
+          type: string
+          description: How people know the account; absent when none was given.
+        role_name:
+          type: string
+          description: The role's name, the last part of its ARN.
+        region:
+          type: string
+          description: Where the console opens; absent for the global console.
+        console:
+          type: boolean
+          description: Whether a session may open the account's console.
+        cli:
+          type: boolean
+          description: Whether a session may take command-line credentials.
     UserSuppliedCredential:
       type: object
       description: >-
@@ -8332,6 +8826,140 @@ components:
           description: >
             How long a kube session lives without a request before it ends by itself: the
             policy's idle time, or eight hours when the policy sets none.
+        cloud:
+          $ref: "#/components/schemas/CloudSession"
+    CloudSession:
+      type: object
+      description: >-
+        What a cloud session (protocol `cloud`, ADR 0050) hands the caller once, beside
+        `session_id` and `expires_at` (when the session ends). Never stored: the gateway keeps
+        only the token's hash.
+      required: [token, credentials_url, profile, console, cli, account_id, role_name, expires_at]
+      properties:
+        token:
+          type: string
+          description: >-
+            The session's bearer (`zaws_` and 32 random bytes, base64url), which alone opens
+            `GET /cloud/{id}/credentials`. Empty when the grant shuts the command line: a token
+            nothing would take is not handed out.
+        credentials_url:
+          type: string
+          description: The credentials route at the gateway's public address; empty with the command line shut.
+        profile:
+          type: string
+          description: >-
+            A ready `~/.aws/config` stanza, `[profile zanskar-<alias or account>-<role>]`, whose
+            `credential_process` runs curl against `credentials_url` with the bearer, and the
+            region when the role has one. Empty with the command line shut.
+        console:
+          type: boolean
+          description: Whether `POST /cloud/{id}/console` is open to this session.
+        cli:
+          type: boolean
+          description: Whether `GET /cloud/{id}/credentials` is open to this session.
+        account_id:
+          type: string
+        account_alias:
+          type: string
+        role_name:
+          type: string
+        region:
+          type: string
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+    CloudSetup:
+      type: object
+      description: What a cloud account's role must trust (ADR 0050, 1), from `GET /targets/{id}/cloud/setup`.
+      required: [principal, pending, external_id, trust_policy, permissions_policy, cli, cloudformation]
+      properties:
+        principal:
+          type: [string, "null"]
+          description: This gateway's AWS principal, which the trust policy names; null while unknown.
+        pending:
+          type: boolean
+          description: True while the principal is unknown; `trust_policy`, `cli` and `cloudformation` are then empty, never placeholders.
+        external_id:
+          type: string
+          description: The role's ExternalId, which the trust policy's condition carries.
+        trust_policy:
+          type: string
+          description: The trust policy as JSON, allowing `sts:AssumeRole`, `sts:SetSourceIdentity` and `sts:TagSession` to the principal with the ExternalId condition.
+        permissions_policy:
+          type: string
+          description: >-
+            An IAM policy document with one statement allowing `cloudtrail:LookupEvents` on `*` (the
+            action takes no resource), which the gateway's read of a session's activity needs (phase
+            C). Names no principal, so it is given whether pending or not; `cli` puts it on the role
+            as the inline policy `ZanskarActivity`, `cloudformation` carries it under `Policies`.
+        cli:
+          type: string
+          description: AWS CLI lines that put the trust policy on the role, or create it, and put the activity policy on it.
+        cloudformation:
+          type: string
+          description: A CloudFormation template for a new role carrying the trust policy and the activity policy.
+    CloudTest:
+      type: object
+      description: What a role's test found (ADR 0050, 1), from `POST /targets/{id}/cloud/test`.
+      required: [ok, stage, message, lookup_events]
+      properties:
+        ok:
+          type: boolean
+        assumed_arn:
+          type: string
+          description: The assumed-role ARN STS answered; set when the role was assumed, whether or not a later stage refused.
+        stage:
+          type: string
+          enum: [assume, identity, duration, lookup, ""]
+          description: >-
+            The stage that refused, or empty when every stage passed. `lookup` is CloudTrail failing
+            otherwise than by a refusal (unreachable, throttled); a refusal is `lookup_events: false`
+            with `ok` true.
+        message:
+          type: string
+          description: What happened, in a sentence a person can act on.
+        lookup_events:
+          type: [boolean, "null"]
+          description: >-
+            Whether the role may read the account's CloudTrail for a session's activity (phase C),
+            tried with the assumed credentials after `identity`: one `LookupEvents` call, one event
+            at most, over the last minute. False is an answer, not a failure: the activity is then
+            not read, and the message says so. Null when an earlier stage refused.
+    CloudActivity:
+      type: object
+      description: One read of a live cloud session's activity (ADR 0050, phase C), from `POST /sessions/{id}/activity`.
+      required: [events, read_until]
+      properties:
+        events:
+          type: integer
+          description: How many events this read appended to the recording; those already on it are not counted again.
+        read_until:
+          $ref: "#/components/schemas/Timestamp"
+          description: The end of the window read; the next read starts 15 minutes before it, since events arrive late, and keeps each event once.
+    CloudConsole:
+      type: object
+      description: >-
+        The console sign-in the portal POSTs into a new tab (ADR 0050, 3), from
+        `POST /cloud/{id}/console`: the federation endpoint's `login` form, never a URL a browser
+        would keep in its history.
+      required: [action, fields, console_until, duration_honoured]
+      properties:
+        action:
+          type: string
+          description: The federation endpoint the form posts to.
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+          description: The form's fields, `Action`, `Issuer`, `Destination` and `SigninToken`.
+        console_until:
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+          description: When the console session ends by itself; a terminate cannot bring it forward.
+        duration_honoured:
+          type: boolean
+          description: >-
+            Whether AWS took the session's remaining time as the console's duration; false when it
+            refused (chained credentials) and the console runs for the credentials' own length.
 
     # ---------------------------------------------------------------- sessions
     OwnSession:
@@ -8380,6 +9008,13 @@ components:
             ended it (for a desktop, guacd's). Absent for a plain exit.
         failover_from_session_id:
           type: [string, "null"]
+        cloud_console_until:
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+          description: >-
+            For a live cloud session (ADR 0050) whose console sign-in was issued: when that
+            console session ends by itself, which a terminate cannot bring forward. Known while
+            this gateway holds the session; absent otherwise.
     FileEntry:
       type: object
       required: [name, path, dir, size, mode, mtime]
@@ -9022,6 +9657,12 @@ components:
               additionalProperties:
                 type: integer
               description: Active clusters per platform (`vanilla`, `eks`, `gke`, `aks`); a platform with none is absent.
+            cloud_roles:
+              type: integer
+              description: Active cloud account roles (ADR 0050).
+            cloud_accounts:
+              type: integer
+              description: The distinct accounts the active roles are in.
         autoscaling:
           type: object
           required: [groups, instances, healthy_instances]

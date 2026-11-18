@@ -4,7 +4,7 @@ import { useAuth } from './auth/AuthContext'
 import { SessionExpired } from './auth/SessionExpired'
 import { Empty, Loading, NotFound } from './components/ui'
 import { SessionLoading } from './components/SessionSplash'
-import { Shell } from './components/Shell'
+import { Shell, type NavItem } from './components/Shell'
 import type { Role } from './api/types'
 import { homeFor } from './auth/home'
 import { api } from './api/client'
@@ -16,11 +16,14 @@ import { loadDesktop, loadTerminal } from './pages/user/sessionPages'
 import { MySessions } from './pages/user/MySessions'
 import { MyAccess } from './pages/user/MyAccess'
 import { MyActivity } from './pages/user/MyActivity'
+import { pendingForMe } from './pages/approvals/badge'
 
 // The terminal pulls in xterm; load it only when a session opens.
 const Terminal = lazy(loadTerminal)
 const Desktop = lazy(loadDesktop)
 const Shadow = lazy(() => import('./pages/audit/Shadow').then((m) => ({ default: m.Shadow })))
+// The approver's queue (ADR 0049) loads when an approver opens it.
+const ApproverApprovals = lazy(() => import('./pages/approvals/Approvals').then((m) => ({ default: m.ApproverApprovals })))
 import { adminRoutes } from './pages/admin'
 import { adminAuditRoutes, auditRoutes } from './pages/audit'
 
@@ -96,6 +99,20 @@ const pendingApprovals = () => api.cached<Page<AccessRequest>>('/access-requests
 // them, so the UI hides what would only fail.
 const connectRoles: Role[] = ['user', 'admin']
 
+// AccessShell is the access portal's sidebar. An approver decides from the
+// portal they already use: the item leads to their queue (ADR 0049).
+function AccessShell() {
+  const { hasRole } = useAuth()
+  const items: NavItem[] = [
+    { to: '/', label: 'Targets', end: true },
+    { to: '/access', label: 'Access' },
+    { to: '/sessions', label: 'Sessions' },
+    { to: '/activity', label: 'Activity' },
+  ]
+  if (hasRole('approver')) items.push({ to: '/approvals', label: 'Approvals', badge: pendingForMe })
+  return <Shell portal="user" items={items} />
+}
+
 export default function App() {
   return (
     <>
@@ -138,15 +155,7 @@ export default function App() {
         path="/"
         element={
           <Guard roles={connectRoles}>
-            <Shell
-              portal="user"
-              items={[
-                { to: '/', label: 'Targets', end: true },
-                { to: '/access', label: 'Access' },
-                { to: '/sessions', label: 'Sessions' },
-                { to: '/activity', label: 'Activity' },
-              ]}
-            />
+            <AccessShell />
           </Guard>
         }
       >
@@ -169,7 +178,8 @@ export default function App() {
                 { to: '/admin/databases', label: 'Databases' },
                 { to: '/admin/applications', label: 'Applications' },
                 { to: '/admin/autoscaling', label: 'Autoscaling' },
-                { to: '/admin/fabric', label: 'Kubernetes' },
+                { to: '/admin/kubernetes', label: 'Kubernetes' },
+                { to: '/admin/cloud', label: 'Cloud accounts' },
                 { to: '/admin/credentials', label: 'Credentials' },
                 { to: '/admin/policies', label: 'Policies' },
                 { to: '/admin/approvals', label: 'Approvals', badge: pendingApprovals, badgeShared: true },
@@ -191,6 +201,21 @@ export default function App() {
             landing on the dashboard as if it were asked for (Q3). Top-level
             unknown paths still go to the account's own portal. */}
         <Route path="*" element={<NotFound home="/admin" />} />
+      </Route>
+      {/* The approver's portal (ADR 0049): the requests the grants name them
+          for. An administrator is admitted wherever an approver is: one a
+          grant names follows the same mail link here; otherwise they decide
+          from their own Approvals page. */}
+      <Route
+        path="/approvals"
+        element={
+          <Guard roles={['approver', 'admin']}>
+            <Shell portal="approvals" items={[{ to: '/approvals', label: 'Approvals', end: true, badge: pendingForMe, badgeShared: true }]} />
+          </Guard>
+        }
+      >
+        <Route index element={<ApproverApprovals />} />
+        <Route path="*" element={<NotFound home="/approvals" />} />
       </Route>
       <Route
         path="/audit"

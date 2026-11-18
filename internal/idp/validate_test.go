@@ -4,6 +4,8 @@ package idp
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/albatroxxx/zanskar/internal/user"
@@ -164,5 +166,55 @@ func TestKeycloakRealm(t *testing.T) {
 		if _, _, err := KeycloakRealm(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+// TestApproverGroupsNeedAGroupsClaim (review R5): an OIDC provider with no
+// groups claim asserts no group at sign-in, so approver groups on it would
+// withdraw the role from everyone who signs in; they are refused when saved.
+// LDAP asserts memberOf without a setting, so nothing is asked of it.
+func TestApproverGroupsNeedAGroupsClaim(t *testing.T) {
+	c := okOIDC()
+	c.ApproverGroups = []string{"approvers"}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "groups_claim") {
+		t.Fatalf("approver groups without a groups claim: %v", err)
+	}
+	c.OIDC.GroupsClaim = "groups"
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); err != nil {
+		t.Fatalf("with a groups claim: %v", err)
+	}
+	l := okLDAP()
+	l.ApproverGroups = []string{"cn=approvers,ou=groups,dc=corp"}
+	if err := Validate(&Provider{Name: "ad", Type: TypeLDAP}, l); err != nil {
+		t.Fatalf("ldap: %v", err)
+	}
+}
+
+// TestApproverGroupsCleaned (ADR 0049, 7): the groups whose members hold the
+// approver role are trimmed, kept once each ignoring case (they are matched
+// that way), and bounded: 32 of them, 256 characters each.
+func TestApproverGroupsCleaned(t *testing.T) {
+	c := okOIDC()
+	c.OIDC.GroupsClaim = "groups" // approver groups need one (review R5)
+	c.ApproverGroups = []string{" approvers ", "", "Approvers", "cn=approvers,ou=groups,dc=corp"}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ApproverGroups) != 2 || c.ApproverGroups[0] != "approvers" || c.ApproverGroups[1] != "cn=approvers,ou=groups,dc=corp" {
+		t.Fatalf("approver groups: %q", c.ApproverGroups)
+	}
+	c.ApproverGroups = []string{strings.Repeat("g", 257)}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a 257-character group: %v", err)
+	}
+	c.ApproverGroups = nil
+	for i := 0; i < 33; i++ {
+		c.ApproverGroups = append(c.ApproverGroups, fmt.Sprintf("team-%d", i))
+	}
+	if err := Validate(&Provider{Name: "corp", Type: TypeOIDC}, c); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("33 groups: %v", err)
+	}
+	if c.ApproverGroups = nil; Validate(&Provider{Name: "corp", Type: TypeOIDC}, c) != nil || len(c.ApproverGroups) != 0 {
+		t.Fatal("none is fine")
 	}
 }

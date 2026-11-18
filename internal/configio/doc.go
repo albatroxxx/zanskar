@@ -70,15 +70,32 @@ type Target struct {
 	// act as the person (the default) or as the credential, a shared
 	// identity. An export writes all three, so a reader sees which way the
 	// cluster's sessions act, and a file leaving them out gets the defaults.
-	KubeAPIServer   string            `yaml:"kube_api_server,omitempty"`
-	KubeCA          string            `yaml:"kube_ca,omitempty"`
-	KubePlatform    string            `yaml:"kube_platform,omitempty"`
-	KubeImpersonate *bool             `yaml:"kube_impersonate,omitempty"`
-	Ports           map[string]int    `yaml:"ports,omitempty"`
-	Tags            map[string]string `yaml:"tags,omitempty"`
-	Status          string            `yaml:"status,omitempty"`
-	Notes           string            `yaml:"notes,omitempty"`
-	RetentionDays   *int              `yaml:"retention_days,omitempty"`
+	KubeAPIServer   string `yaml:"kube_api_server,omitempty"`
+	KubeCA          string `yaml:"kube_ca,omitempty"`
+	KubePlatform    string `yaml:"kube_platform,omitempty"`
+	KubeImpersonate *bool  `yaml:"kube_impersonate,omitempty"`
+	// CloudRoleARN makes the target a cloud account's role (ADR 0050); the
+	// address is the STS endpoint. CloudPlatform is aws (the default),
+	// CloudAccountID the 12-digit account (filled from the ARN),
+	// CloudAccountAlias how people know it, CloudMaxMinutes the longest a
+	// session runs (60 unless set), CloudRegion where the console opens.
+	// CloudExternalID is the ExternalId the role's trust policy carries,
+	// which the gateway mints once: an export writes it so a gateway
+	// rebuilt from the file keeps the trust policies in the accounts valid;
+	// a file without one gets a fresh ExternalId, and the role's Setup
+	// must be pasted again.
+	CloudPlatform     string            `yaml:"cloud_platform,omitempty"`
+	CloudAccountID    string            `yaml:"cloud_account_id,omitempty"`
+	CloudAccountAlias string            `yaml:"cloud_account_alias,omitempty"`
+	CloudRoleARN      string            `yaml:"cloud_role_arn,omitempty"`
+	CloudExternalID   string            `yaml:"cloud_external_id,omitempty"`
+	CloudMaxMinutes   int               `yaml:"cloud_max_minutes,omitempty"`
+	CloudRegion       string            `yaml:"cloud_region,omitempty"`
+	Ports             map[string]int    `yaml:"ports,omitempty"`
+	Tags              map[string]string `yaml:"tags,omitempty"`
+	Status            string            `yaml:"status,omitempty"`
+	Notes             string            `yaml:"notes,omitempty"`
+	RetentionDays     *int              `yaml:"retention_days,omitempty"`
 	// Credentials names the credential each protocol signs in with.
 	Credentials map[string]string `yaml:"credentials,omitempty"`
 }
@@ -135,6 +152,17 @@ type Grant struct {
 	Namespaces   []string `yaml:"namespaces,omitempty,flow"`
 	ClusterScope bool     `yaml:"cluster_scope,omitempty"`
 	PortForward  bool     `yaml:"port_forward,omitempty"`
+	// Approvers are the groups and people who decide an approval grant's
+	// requests (ADR 0049), by name as subjects are. Carried whole: a file
+	// that lost them would import a grant any administrator decides.
+	Approvers []Subject `yaml:"approvers,omitempty"`
+	// A cloud grant's switches (ADR 0050): whether its sessions may open
+	// the account's console and take command-line credentials. Both on
+	// when a file leaves them out; an export writes both, so a reader sees
+	// which doors the grant opens. A file that lost a shut one would import
+	// a grant that opens it.
+	CloudConsole *bool `yaml:"cloud_console,omitempty"`
+	CloudCLI     *bool `yaml:"cloud_cli,omitempty"`
 }
 
 // Policy is an audience and its grants (ADR 0036).

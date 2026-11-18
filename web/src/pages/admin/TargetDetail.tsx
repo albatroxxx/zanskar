@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api, errorMessage } from '../../api/client'
 import { appTLS, dbTLS, engineName, fmtTime, platformName, protocolName } from '../../api/format'
-import type { AppEndpoint, CertificateProbe, Credential, DependencyRefusal, KubeTest, ProbeResponse, Protocol, Target } from '../../api/types'
+import type { AppEndpoint, CertificateProbe, CloudTest, Credential, DependencyRefusal, KubeTest, ProbeResponse, Protocol, Target } from '../../api/types'
 import { OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Confirm, Modal, Tags } from '../../components/ui'
 import { DeleteAsset } from './DeleteAsset'
 import { hostKeyBadge, protocols, usesHostKey } from './lib'
 import { CredentialBindings, type BindingChange } from './Bindings'
+import { accountLabel, roleName } from './cloudNames'
+import { CloudSetup } from './CloudSetup'
 import { enginePorts, hostPorts, kindOf, TargetForm, targetBody } from './TargetForm'
 
 /**
@@ -47,8 +49,12 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const database = kind === 'database'
   const application = kind === 'application'
   const cluster = kind === 'kubernetes'
+  const cloud = kind === 'cloud'
   const host = kind === 'host'
   const [kubeTest, setKubeTest] = useState<KubeTest | null>(null)
+  // A cloud role (ADR 0050): its trust pastes, and the role assumed for the target's minutes.
+  const [cloudTest, setCloudTest] = useState<CloudTest | null>(null)
+  const [setup, setSetup] = useState(false)
   const [manifest, setManifest] = useState<string | null>(null)
   const learns = application && t.app_dependencies !== 'origins'
   useEffect(() => {
@@ -80,6 +86,15 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
   const showManifest = () =>
     run(async () => {
       setManifest(await api.text(`/targets/${t.id}/kube/manifest`))
+    })
+  const doCloudTest = () =>
+    run(async () => {
+      setProbing(true)
+      try {
+        setCloudTest(await api.post<CloudTest>(`/targets/${t.id}/cloud/test`, {}))
+      } finally {
+        setProbing(false)
+      }
     })
 
   const doProbe = () =>
@@ -210,6 +225,14 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               </>
             )}
           </>
+        ) : cloud ? (
+          <>
+            <dt>Account</dt><dd className="mono">{accountLabel(t)}</dd>
+            <dt>Role</dt><dd className="mono" title={t.cloud_role_arn}>{roleName(t.cloud_role_arn)}</dd>
+            <dt>Max</dt><dd>{t.cloud_max_minutes ? `${t.cloud_max_minutes} min` : '—'}</dd>
+            <dt>Region</dt><dd className="mono">{t.cloud_region || '—'}</dd>
+            <dt>External ID</dt><dd className="mono">{t.cloud_external_id}</dd>
+          </>
         ) : application ? (
           <>
             <dt>Upstream</dt><dd className="mono">{t.app_upstream}</dd>
@@ -305,7 +328,8 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
           themselves, inside the isolated browser (ADR 0034). A
           database target has one slot, the brokered "database" protocol; the
           host slots (ssh, rdp, vnc, winrm) do not apply to it. */}
-      {!application && (
+      {/* A cloud role holds no credential either (ADR 0050): the role's trust policy is the trust. */}
+      {!application && !cloud && (
         <>
           <h2 style={{ marginTop: 18 }}>{database ? 'Database credential' : cluster ? 'Cluster credential' : 'Credentials per protocol'}</h2>
           <CredentialBindings
@@ -383,6 +407,20 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
               <button className="btn" onClick={() => void showManifest()}>RBAC manifest</button>
             </>
           )}
+          {cloud && (
+            <>
+              <button className="btn" onClick={() => setSetup(true)}>Setup</button>
+              <button className="btn" onClick={() => void doCloudTest()} disabled={probing}>{probing ? 'Testing…' : 'Test'}</button>
+              {cloudTest && (cloudTest.ok ? (
+                <span>
+                  Assumed <span className="mono">{cloudTest.assumed_arn}</span>
+                  {cloudTest.lookup_events === false ? ' · activity not readable' : cloudTest.lookup_events ? ' · activity readable' : ''}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--danger)' }}>{cloudStage(cloudTest.stage)}: {cloudTest.message}</span>
+              ))}
+            </>
+          )}
           {canTrust && (
             <button className="btn primary" onClick={() => setConfirm('trust')}>Trust host key</button>
           )}
@@ -442,6 +480,7 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
         />
       )}
       {confirm === 'delete' && <DeleteAsset name={t.name} path={`/targets/${t.id}`} onClose={() => setConfirm(null)} onDeleted={onDeleted} />}
+      {setup && <CloudSetup target={t} onClose={() => setSetup(false)} />}
       {manifest !== null && (
         <Modal title="RBAC manifest" onClose={() => setManifest(null)} width={720}>
           <pre className="mono" style={{ whiteSpace: 'pre', overflow: 'auto', maxHeight: '60vh' }}>{manifest}</pre>
@@ -452,6 +491,17 @@ export function TargetDetail({ target, credentials, onClose, onChanged, onDelete
       )}
     </Modal>
   )
+}
+
+/** cloudStage names which step of a cloud role's test refused (ADR 0050). */
+function cloudStage(stage: CloudTest['stage']): string {
+  switch (stage) {
+    case 'assume': return 'Not assumed'
+    case 'identity': return 'No identity'
+    case 'duration': return 'Duration refused'
+    case 'lookup': return 'Activity not readable'
+    default: return 'Failed'
+  }
 }
 
 /**

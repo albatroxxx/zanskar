@@ -22,9 +22,10 @@ func StateOf(status Status, expiresAt *time.Time, now time.Time) Status {
 
 // Lifecycle is the request's declared lifecycle (ADR 0018).
 var Lifecycle = states.New("access request",
-	[]string{string(StatusPending), string(StatusApproved), string(StatusDenied), string(StatusExpired), string(StatusRevoked)},
+	[]string{string(StatusPending), string(StatusApproved), string(StatusDenied), string(StatusExpired), string(StatusRevoked), string(StatusCancelled)},
 	states.Move{From: "pending", To: "approved", By: audit.AccessRequestApprove},
 	states.Move{From: "pending", To: "denied", By: audit.AccessRequestDeny},
+	states.Move{From: "pending", To: "cancelled", By: audit.AccessRequestCancel},
 	states.Move{From: "pending", To: "revoked", By: "the target or group is deleted (" + audit.TargetDelete + ")"},
 	states.Move{From: "approved", To: "revoked", By: audit.AccessRequestRevoke},
 	states.Move{From: "approved", To: "revoked", By: "the target or group is deleted (" + audit.TargetDelete + ")"},
@@ -36,6 +37,7 @@ var Lifecycle = states.New("access request",
 		"`expired` once a minute, and the clock is the truth in between. A grant is active while `state` is `approved`.",
 	Notes: []string{
 		"Revoke applies to an active grant only; a lapsed one answers 409 with the state named.",
-		"A pending request never expires on its own and cannot be withdrawn by the requester.",
+		"A pending request never expires on its own; its requester may cancel it (ADR 0049).",
+		"Where the grant names approvers they alone approve and deny, never their own request; an administrator revokes any grant, and the requester may end their own, which is a revoke by them (ADR 0049).",
 	},
 })

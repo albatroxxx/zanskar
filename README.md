@@ -67,8 +67,9 @@ it is taken away.
 | **Databases** | `psql`, `mysql` and `mariadb` sessions through a per-session client container. The database credential lives in a sidecar and never reaches the client, not even from a shell escape. TLS to the database is per target, up to `verify-full` with your CA bundle. |
 | **Web applications** | An internal web application opens in a sandboxed Chromium container beside the gateway, streamed and recorded like a desktop, on a private network that reaches the application's one port and nothing else. Needs a container runtime on the gateway host, as database sessions do. |
 | **Keyless SSH** | An SSH certificate authority that mints a minutes-long certificate per session, naming the Zanskar user in the target's own log. One `TrustedUserCAKeys` line per target, and a two-step rotation that never locks a host out. Vaulted passwords and keys remain for everything else. |
-| **Just-in-time access** | A policy can grant eligibility instead of standing access: the user asks with a reason and a duration, an administrator approves, and the grant is time-boxed, extendable and expires on its own. |
-| **Identity, kept separate** | Local accounts with Argon2id and TOTP, or OIDC and LDAP / Active Directory sign-in with audited group-to-role mapping. Who you are to Zanskar is distinct from how Zanskar reaches a target. Three roles: admin, auditor, user. |
+| **Just-in-time access** | A policy can grant eligibility instead of standing access: the user asks with a reason and a duration, an administrator or the approver the policy names approves, and the grant is time-boxed, extendable and expires on its own. |
+| **Cloud accounts** | A role in an AWS account is a target: the gateway assumes it for an approved person and hands them a console sign-in or `credential_process` credentials for a bounded session, holding no secret for the account. CloudTrail names the person on every call, and what they did is read back into the session's recording. This is the one place the browser reaches the target itself, AWS's console, signed in as the role. |
+| **Identity, kept separate** | Local accounts with Argon2id and TOTP, or OIDC and LDAP / Active Directory sign-in with audited group-to-role mapping. Who you are to Zanskar is distinct from how Zanskar reaches a target. Four roles: admin, auditor, approver, user. |
 | **Access taken away ends the session** | Disabling an account, changing its groups or revoking a policy ends the live sessions that access allowed, and tells the user why. |
 | **Operated from the console** | HTTPS out of the box with a certificate the gateway manages, runtime settings applied live, recordings on local disk or an S3-compatible bucket, restart, update and host actions behind a fresh authenticator code, a Logs page, and an audited command line inside the console. |
 
@@ -136,7 +137,7 @@ To build from source you need Go 1.27 or newer and Node 22 or newer; [CONTRIBUTI
                          ├── SQLite or PostgreSQL (state, sealed secrets, audit chain)
                          ├── recordings: local disk or S3-compatible storage
                          ├── identity providers: OIDC, LDAP / Active Directory
-                         └── AWS APIs: STS AssumeRole, Auto Scaling, EC2
+                         └── AWS APIs: STS AssumeRole, Auto Scaling, EC2, CloudTrail, the console sign-in
 ```
 
 One Go process: the API, the embedded React console, the protocol bridges and the audit chain.

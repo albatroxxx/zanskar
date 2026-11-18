@@ -22,6 +22,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/asg"
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/credential"
 	"github.com/albatroxxx/zanskar/internal/gateway"
 	"github.com/albatroxxx/zanskar/internal/gateway/kubegw"
@@ -35,6 +36,7 @@ import (
 	"github.com/albatroxxx/zanskar/internal/sshca"
 	"github.com/albatroxxx/zanskar/internal/target"
 	"github.com/albatroxxx/zanskar/internal/ticket"
+	"github.com/albatroxxx/zanskar/internal/user"
 )
 
 // Handler wires the connect flow.
@@ -121,6 +123,37 @@ type Handler struct {
 	// Groups resolves the person's groups, which a Kubernetes session acts
 	// as in the cluster; nil sends none.
 	Groups *group.Repo
+	// Cloud sessions (ADR 0050): NewMinter builds what assumes a role in a
+	// region (nil: STS with the gateway's own identity); Federation is the
+	// exchange a console sign-in goes through (nil: AWS's endpoint); clouds
+	// holds the live sessions the /api/v1/cloud/{id}/ routes serve.
+	NewMinter  func(ctx context.Context, region string) (cloud.RoleMinter, error)
+	Federation *cloud.Federation
+	clouds     cloudSessions
+	// NewTrail builds what reads CloudTrail with minted credentials for a
+	// session's activity (phase C; nil: the SDK's client); awaiting holds the
+	// sessions whose recording stays open after their end for the last read,
+	// which Awaiting tells the sweep.
+	NewTrail cloud.TrailFactory
+	awaiting startingSet
+}
+
+// CloudSessions is how many cloud sessions are live here; tests wait on it.
+func (h *Handler) CloudSessions() int { return h.clouds.Len() }
+
+// Awaiting reports whether the session's recording is held open here for
+// its activity's last read (ADR 0050, phase C): this gateway's still, as
+// far as the sweep is concerned.
+func (h *Handler) Awaiting(id string) bool {
+	_, ok := h.awaiting.m.Load(id)
+	return ok
+}
+
+// AwaitingActivity is how many such recordings are held; tests wait on it.
+func (h *Handler) AwaitingActivity() int {
+	n := 0
+	h.awaiting.m.Range(func(any, any) bool { n++; return true })
+	return n
 }
 
 // Register mounts the routes. Every REST route here is for accounts that may
@@ -148,11 +181,21 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// A Kubernetes session's endpoint (ADR 0045): every method, the API
 	// path after the session id, the session token its only credential.
 	mux.HandleFunc("/k8s/{id}/", h.kubeProxy)
+	// A cloud session's endpoints (ADR 0050): the command line's credentials,
+	// the session token their only credential; the console sign-in, for the
+	// session's own person signed in to the portal.
+	mux.HandleFunc("GET /api/v1/cloud/{id}/credentials", h.cloudCredentials)
+	mux.Handle("POST /api/v1/cloud/{id}/console", auth.RequireConnect(http.HandlerFunc(h.cloudConsole)))
+	// A cloud session's activity read from CloudTrail on demand (ADR 0050,
+	// phase C): a reviewer's route, as the Sessions routes are guarded
+	// (admins and auditors read, ADR 0006); it lives here because the live
+	// session does.
+	mux.Handle("POST /api/v1/sessions/{id}/activity", auth.RequireRole(user.RoleAdmin, user.RoleAuditor)(http.HandlerFunc(h.cloudActivity)))
 }
 
 // reachableTarget is what a user sees in their target list.
 type reachableTarget struct {
-	Kind         string            `json:"kind"` // target | asg | application | cluster
+	Kind         string            `json:"kind"` // target | asg | application | cluster | cloud
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	OSFamily     target.OSFamily   `json:"os_family"`
@@ -177,11 +220,30 @@ type reachableTarget struct {
 	// PrivateIP is shown only when the target's address is a private (RFC1918 /
 	// ULA) IP, to help users tell their machines apart. A public address or a
 	// hostname is never surfaced to users; empty then.
-	PrivateIP    string `json:"private_ip,omitempty"`
-	Engine       string `json:"engine,omitempty"`   // database targets (ADR 0017)
-	Platform     string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks
-	HealthyCount int    `json:"healthy_count,omitempty"`
-	InstanceCnt  int    `json:"instance_count,omitempty"`
+	PrivateIP string `json:"private_ip,omitempty"`
+	Engine    string `json:"engine,omitempty"`   // database targets (ADR 0017)
+	Platform  string `json:"platform,omitempty"` // clusters (ADR 0045): vanilla, eks, gke, aks
+	// Unavailable says why no session can start on this gateway for a
+	// cluster or a cloud role (the public address unset), so the portal
+	// greys the button and says so before a click; "" when one can.
+	Unavailable string `json:"unavailable,omitempty"`
+	// Cloud is a cloud account's role (ADR 0050), for the portal's Cloud tab;
+	// nil on every other kind.
+	Cloud        *reachableCloud `json:"cloud,omitempty"`
+	HealthyCount int             `json:"healthy_count,omitempty"`
+	InstanceCnt  int             `json:"instance_count,omitempty"`
+}
+
+// reachableCloud is what the portal shows of a role (ADR 0050): where it is,
+// and which of the two doors the caller's grants open, the strictest across
+// the grants that admit them (policy.Decision.Cloud). The ARN stays here.
+type reachableCloud struct {
+	AccountID    string `json:"account_id"`
+	AccountAlias string `json:"account_alias,omitempty"`
+	RoleName     string `json:"role_name"`
+	Region       string `json:"region,omitempty"`
+	Console      bool   `json:"console"`
+	CLI          bool   `json:"cli"`
 }
 
 func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +318,33 @@ func (h *Handler) myTargets(w http.ResponseWriter, r *http.Request) {
 				}
 				out = append(out, reachableTarget{
 					Kind: "cluster", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{target.Kube},
-					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.KubePlatform,
+					Allowed: allowed, RequiresApproval: needApproval, HostKeyReady: true, Platform: t.KubePlatform, Unavailable: h.kubeOff(),
+				})
+				continue
+			}
+			if t.IsCloud() {
+				// A cloud account's role (ADR 0050) is reached over cloud
+				// alone: a session from the portal, no socket. The portal
+				// shows the account, the role and which doors the grants
+				// open; the ARN stays here. One protocol, so the decision
+				// is read once, for its switches too.
+				d := policy.Evaluate(pols, policy.TargetRef{Kind: t.Kind(), ID: t.ID, Tags: t.Tags}, string(target.Cloud), now)
+				if !d.Allowed {
+					continue
+				}
+				var needApproval []string
+				if d.RequireApproval {
+					needApproval = []string{string(target.Cloud)}
+				}
+				terms := policy.CloudTerms{Console: true, CLI: true}
+				if d.Cloud != nil {
+					terms = *d.Cloud
+				}
+				out = append(out, reachableTarget{
+					Kind: "cloud", ID: t.ID, Name: t.Name, OSFamily: t.OSFamily, Tags: t.Tags, Capabilities: []target.Protocol{target.Cloud},
+					Allowed: []string{string(target.Cloud)}, RequiresApproval: needApproval, HostKeyReady: true, Unavailable: h.cloudOff(),
+					Cloud: &reachableCloud{AccountID: t.CloudAccountID, AccountAlias: t.CloudAccountAlias, RoleName: t.CloudRoleName(), Region: t.CloudRegion,
+						Console: terms.Console, CLI: terms.CLI},
 				})
 				continue
 			}
@@ -372,6 +460,9 @@ type connectResponse struct {
 	SessionID   string `json:"session_id,omitempty"`
 	Kubeconfig  string `json:"kubeconfig,omitempty"`
 	IdleSeconds int    `json:"idle_seconds,omitempty"`
+	// A cloud session (ADR 0050) starts on connect too: its token, the
+	// profile stanza and what the portal shows.
+	Cloud *cloudConnect `json:"cloud,omitempty"`
 }
 
 // ticketExpiry is when a ticket just issued lapses.
@@ -443,6 +534,13 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 			deny(http.StatusNotImplemented, "protocol_unavailable", msg)
 			return
 		}
+	case target.Cloud:
+		// A cloud session (ADR 0050) starts here too and answers its
+		// handle; the profile and the console form name the public address.
+		if msg := h.cloudOff(); msg != "" {
+			deny(http.StatusNotImplemented, "protocol_unavailable", msg)
+			return
+		}
 	default:
 		deny(http.StatusNotImplemented, "protocol_unavailable", "protocol not available")
 		return
@@ -474,9 +572,12 @@ func (h *Handler) connect(w http.ResponseWriter, r *http.Request) {
 		res       *connectResponse
 		code, msg string
 	)
-	if proto == target.Kube {
+	switch proto {
+	case target.Kube:
 		res, code, msg, err = h.startKube(r, p, auth.ClientIP(r), ep)
-	} else {
+	case target.Cloud:
+		res, code, msg, err = h.startCloud(r, p, auth.ClientIP(r), ep)
+	default:
 		res, code, msg, err = h.issueTicket(r.Context(), p, auth.ClientIP(r), ep, proto, req.Credential, "")
 	}
 	if err != nil {

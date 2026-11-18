@@ -256,6 +256,11 @@ func mailBody(from string, to []string, m Message) []byte {
 	if m.Link != "" {
 		fmt.Fprintf(&b, "\r\n%s\r\n", m.Link)
 	}
-	fmt.Fprintf(&b, "\r\n-- \r\nZanskar, event %d at %s\r\n", m.EventID, m.At)
+	if m.EventID > 0 {
+		fmt.Fprintf(&b, "\r\n-- \r\nZanskar, event %d at %s\r\n", m.EventID, m.At)
+	} else {
+		// A direct message (ADR 0049) follows no event of the log.
+		fmt.Fprintf(&b, "\r\n-- \r\nZanskar, %s\r\n", m.At)
+	}
 	return []byte(b.String())
 }

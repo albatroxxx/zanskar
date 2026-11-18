@@ -10,10 +10,11 @@ import { Kubernetes } from './Kubernetes'
 // Fabric (ADR 0048): Kubernetes clusters, reached through the gateway as
 // the person. It reads Kubernetes in the sidebar and as the heading (the
 // owner, 2026-11-13: everything in it is Kubernetes, so the section's own
-// name says nothing); the route and the code keep the section's name. A
+// name says nothing), and since 2.0.0 at its address too, /admin/kubernetes
+// (the owner, 2026-11-16); the code keeps the section's name. A
 // tab per platform (each its own thing, Vanilla since all four are
 // Kubernetes); the tiles are the tabs, the open one filled in the accent;
-// /admin/fabric/<platform> names the open one. Autoscaling groups were the first tab for a day (2026-11-12) and
+// /admin/kubernetes/<platform> names the open one. Autoscaling groups were the first tab for a day (2026-11-12) and
 // went back to their own page: a person opens an instance as they open a
 // host, so the groups belong beside the hosts.
 export const platforms: { key: KubePlatform; icon: 'k8s' | 'eks' | 'gke' | 'aks' }[] = [
@@ -35,9 +36,9 @@ export function Fabric() {
   }, [])
   if (kind === 'autoscaling') return <Navigate to="/admin/autoscaling" replace />
   // The one-tab address of the day before (2026-11-12) opens the first platform.
-  if (kind === 'kubernetes') return <Navigate to="/admin/fabric" replace />
+  if (kind === 'kubernetes') return <Navigate to="/admin/kubernetes" replace />
   const open = platforms.find((p) => p.key === kind)
-  if (!open) return <Navigate to="/admin/fabric" replace />
+  if (!open) return <Navigate to="/admin/kubernetes" replace />
   return (
     <>
       <PageHead title="Kubernetes">
@@ -45,7 +46,7 @@ export function Fabric() {
       </PageHead>
       <nav className="stat-grid platforms" aria-label="Platforms">
         {platforms.map((p) => (
-          <StatTile key={p.key} value={counts ? (counts.clusters_by_platform[p.key] ?? 0) : null} label={platformName(p.key)} icon={<TileIcon kind={p.icon} />} to={`/admin/fabric/${p.key}`} selected={p.key === open.key} />
+          <StatTile key={p.key} value={counts ? (counts.clusters_by_platform[p.key] ?? 0) : null} label={platformName(p.key)} icon={<TileIcon kind={p.icon} />} to={`/admin/kubernetes/${p.key}`} selected={p.key === open.key} />
         ))}
       </nav>
       <Kubernetes key={open.key} platform={open.key} adding={adding} setAdding={setAdding} />

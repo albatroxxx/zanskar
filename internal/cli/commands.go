@@ -98,7 +98,7 @@ func commands() []*command {
 		{name: "session show", group: "Sessions", args: []string{"<id>"}, summary: "One session in full. The id can be the first 8 characters shown by sessions.", example: "session show 3f9a1c20", exec: cmdSessionShow},
 		{name: "session terminate", group: "Sessions", args: []string{"<id>"}, summary: "End a live session now. Its recording stops at that moment.", example: "session terminate 3f9a1c20", plan: planSessionTerminate, exec: cmdSessionTerminate},
 
-		{name: "users", group: "Users", flags: []flag{{"role", "<role>", "admin, auditor or user"}}, summary: "People who can sign in.", example: "users --role admin", exec: cmdUsers},
+		{name: "users", group: "Users", flags: []flag{{"role", "<role>", "admin, auditor, approver or user"}}, summary: "People who can sign in.", example: "users --role admin", exec: cmdUsers},
 		{name: "user show", group: "Users", args: []string{"<username>"}, summary: "One user in full.", example: "user show alice", exec: cmdUserShow},
 		{name: "user disable", group: "Users", args: []string{"<username>"}, summary: "Stop a user signing in, and sign them out everywhere.", example: "user disable alice", plan: planUser("disable"), exec: cmdUserStatus("disabled")},
 		{name: "user enable", group: "Users", args: []string{"<username>"}, summary: "Let a disabled user sign in again.", example: "user enable alice", exec: cmdUserStatus("active")},
@@ -111,7 +111,7 @@ func commands() []*command {
 
 		{name: "policies", group: "Access", summary: "Access policies.", example: "policies", exec: cmdPolicies},
 		{name: "policy show", group: "Access", args: []string{"<name>"}, summary: "One policy in full.", example: "policy show prod-db-jit", exec: cmdPolicyShow},
-		{name: "requests", group: "Access", flags: []flag{{"pending", "", "only requests waiting for a decision"}}, summary: "Access requests, newest first.", example: "requests --pending", exec: cmdRequests},
+		{name: "requests", group: "Access", flags: []flag{{"pending", "", "only requests waiting for a decision"}, {"mine", "", "only the requests you are named to decide, and those you decided (ADR 0049)"}}, summary: "Access requests, newest first.", example: "requests --pending", exec: cmdRequests},
 		{name: "request approve", group: "Access", args: []string{"<id>"}, rest: "[note]", summary: "Approve a request; the note is shown to the requester.", example: "request approve 9c1d2e3f ok for the incident", exec: cmdDecide("approve")},
 		{name: "request deny", group: "Access", args: []string{"<id>"}, rest: "[note]", summary: "Deny a request; the note is shown to the requester.", example: "request deny 9c1d2e3f use the staging copy", exec: cmdDecide("deny")},
 		{name: "request revoke", group: "Access", args: []string{"<id>"}, summary: "Withdraw an approved request before it expires.", example: "request revoke 9c1d2e3f", plan: planRevoke, exec: cmdDecide("revoke")},
@@ -536,12 +536,15 @@ func cmdTargets(x *run) error {
 			continue
 		}
 		kind := str(t, "os_family")
-		if e := str(t, "engine"); e != "" {
-			kind = e
-		} else if str(t, "app_upstream") != "" {
+		switch {
+		case str(t, "engine") != "":
+			kind = str(t, "engine")
+		case str(t, "app_upstream") != "":
 			kind = "application"
-		} else if str(t, "kube_api_server") != "" {
+		case str(t, "kube_api_server") != "":
 			kind = "kubernetes"
+		case str(t, "cloud_role_arn") != "":
+			kind = "cloud"
 		}
 		rows = append(rows, []string{str(t, "name"), str(t, "address"), kind, str(t, "host_key_status"), str(t, "tags")})
 	}
@@ -575,6 +578,15 @@ func cmdTargetShow(x *run) error {
 			acts = "the credential (shared identity)"
 		}
 		rows = append(rows, [2]string{"api server", api}, [2]string{"platform", str(t, "kube_platform")}, [2]string{"acts as", acts})
+	}
+	if role := str(t, "cloud_role_arn"); role != "" {
+		// A cloud account's role (ADR 0050): whose account, which role, how
+		// long a session runs, where the console opens.
+		account := str(t, "cloud_account_id")
+		if alias := str(t, "cloud_account_alias"); alias != "" {
+			account = alias + " (" + account + ")"
+		}
+		rows = append(rows, [2]string{"account", account}, [2]string{"role", role}, [2]string{"max session", str(t, "cloud_max_minutes") + " min"}, [2]string{"region", str(t, "cloud_region")})
 	}
 	x.out.pairs(append(rows, [2]string{"id", str(t, "id")}))
 	return nil
@@ -876,8 +888,15 @@ func grantPairs(g policy.Grant, targets, asgs map[string]string) [][2]string {
 		}
 		rows = append(rows, [2]string{"namespaces", ns}, [2]string{"cluster scope", yesNo(g.ClusterScope)}, [2]string{"port-forward", yesNo(g.PortForward)})
 	}
+	if g.Kind == protocol.KindCloud {
+		rows = append(rows, [2]string{"console", yesNo(g.ConsoleAllowed())}, [2]string{"command line", yesNo(g.CLIAllowed())})
+	} else {
+		// A cloud session has no idle (ADR 0050, 3): the gateway sees no
+		// request stream, so the row would state a limit that never applies.
+		rows = append(rows, [2]string{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)})
+	}
 	return append(rows, [][2]string{
-		{"idle timeout", fmt.Sprintf("%d min", g.IdleTimeoutMinutes)}, {"max session", most},
+		{"max session", most},
 		{"windows", windowsText(g.TimeWindows)}, {"retention", keep}, {"id", g.ID},
 	}...)
 }
@@ -964,9 +983,18 @@ func yesNo(b bool) string {
 }
 
 func cmdRequests(x *run) error {
-	path := "/access-requests"
+	// The queue as the API scopes it (ADR 0049): everything for an
+	// administrator, or --mine for what the caller is named to decide.
+	q := url.Values{}
 	if x.has("pending") {
-		path += "?status=pending"
+		q.Set("status", "pending")
+	}
+	if x.has("mine") {
+		q.Set("scope", "mine")
+	}
+	path := "/access-requests"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	items, err := x.listAll(path, 200)
 	if err != nil {
@@ -974,10 +1002,30 @@ func cmdRequests(x *run) error {
 	}
 	rows := make([][]string, 0, len(items))
 	for _, r := range items {
-		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocol.Name(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), str(r, "reason")})
+		rows = append(rows, []string{short(str(r, "id")), str(r, "username"), str(r, "target_name"), protocol.Name(str(r, "protocol")), str(r, "requested_minutes") + "m", str(r, "status"), approversOf(r), str(r, "reason")})
 	}
-	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "FOR", "STATUS", "REASON"}, rows)
+	x.out.table([]string{"ID", "USER", "TARGET", "PROTOCOL", "FOR", "STATUS", "APPROVERS", "REASON"}, rows)
 	return nil
+}
+
+// approversOf is a request's named approvers for the table (ADR 0049):
+// their names joined, or "any admin" when nobody is named.
+func approversOf(r obj) string {
+	list, _ := r["approvers"].([]any)
+	if len(list) == 0 {
+		return "any admin"
+	}
+	names := make([]string, 0, len(list))
+	for _, a := range list {
+		if m, ok := a.(map[string]any); ok {
+			if n := str(m, "name"); n != "" {
+				names = append(names, n)
+			} else {
+				names = append(names, short(str(m, "id")))
+			}
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 func (x *run) requestID() (string, error) {

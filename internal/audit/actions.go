@@ -14,6 +14,7 @@ const (
 	// Just-in-time access requests and the grants they become (ADR 0018).
 	AccessGrantExpire    = "access.grant.expire"
 	AccessRequestApprove = "access.request.approve"
+	AccessRequestCancel  = "access.request.cancel" // the requester withdrew it while pending (ADR 0049)
 	AccessRequestCreate  = "access.request.create"
 	AccessRequestDeny    = "access.request.deny"
 	AccessRequestRevoke  = "access.request.revoke"
@@ -140,6 +141,17 @@ const (
 	SessionFailover    = "session.failover"
 	SessionShadowStart = "session.shadow.start"
 	SessionShadowEnd   = "session.shadow.end"
+	// A cloud session (ADR 0050) hands out a console sign-in and command-line
+	// credentials; each issue is an event, never carrying what was issued.
+	SessionCloudConsole     = "session.cloud.console"
+	SessionCloudCredentials = "session.cloud.credentials"
+	// SessionCloudActivity is a read of a cloud session's activity from
+	// CloudTrail (ADR 0050, phase C): a reviewer's during the session, the
+	// gateway's own after it, or the sweep's note that none was made.
+	SessionCloudActivity = "session.cloud.activity"
+	// TargetCloudTest: an administrator tested a cloud account's role, the
+	// gateway assuming it once (ADR 0050).
+	TargetCloudTest = "target.cloud.test"
 
 	// Runtime settings.
 	SettingsUpdate = "settings.update"

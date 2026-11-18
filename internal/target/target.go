@@ -39,6 +39,7 @@ const (
 	HTTP     Protocol = protocol.HTTP
 	Kube     Protocol = protocol.Kube
 	Pod      Protocol = protocol.Pod
+	Cloud    Protocol = protocol.Cloud
 )
 
 // Protocols lists the host protocols probed in a stable order. Database is not
@@ -58,12 +59,12 @@ var DefaultPorts = map[Protocol]int{SSH: 22, RDP: 3389, VNC: 5900, WinRM: 5986}
 // target's port defaults from its engine (ADR 0017).
 var EngineDefaultPorts = map[string]int{protocol.Postgres: 5432, protocol.MySQL: 3306, protocol.MariaDB: 3306}
 
-// ValidProtocol reports whether p is known. Database, HTTP, Kube and Pod are
-// not probed and carry no port of their own: a database's port comes from its
-// engine, an application's from its upstream, a cluster's from its API
-// server's URL.
+// ValidProtocol reports whether p is known. Database, HTTP, Kube, Pod and
+// Cloud are not probed and carry no port of their own: a database's port
+// comes from its engine, an application's from its upstream, a cluster's from
+// its API server's URL, and a cloud role has no port at all (ADR 0050).
 func ValidProtocol(p Protocol) bool {
-	if p == Database || p == HTTP || p == Kube || p == Pod {
+	if p == Database || p == HTTP || p == Kube || p == Pod || p == Cloud {
 		return true
 	}
 	_, ok := DefaultPorts[p]
@@ -250,7 +251,22 @@ type Target struct {
 	// RBAC decides and its audit log names them. Off, every session acts as
 	// the credential itself: a shared identity, which the console and the
 	// audit log say.
-	KubeImpersonate     *bool            `json:"kube_impersonate,omitempty"`
+	KubeImpersonate *bool `json:"kube_impersonate,omitempty"`
+	// CloudRoleARN makes the target a cloud account's role (ADR 0050, 1):
+	// one role in one account, which the gateway assumes for the person.
+	// Address holds the STS endpoint it reaches for it. CloudPlatform is aws
+	// (the column leaves room for others); CloudAccountID the 12-digit
+	// account, CloudAccountAlias how people know it; CloudExternalID the
+	// ExternalId its trust policy carries, minted here and fixed after;
+	// CloudMaxMinutes the longest a session on it runs; CloudRegion where
+	// the console opens and STS is reached, optional.
+	CloudPlatform       string           `json:"cloud_platform,omitempty"`
+	CloudAccountID      string           `json:"cloud_account_id,omitempty"`
+	CloudAccountAlias   string           `json:"cloud_account_alias,omitempty"`
+	CloudRoleARN        string           `json:"cloud_role_arn,omitempty"`
+	CloudExternalID     string           `json:"cloud_external_id,omitempty"`
+	CloudMaxMinutes     int              `json:"cloud_max_minutes,omitempty"`
+	CloudRegion         string           `json:"cloud_region,omitempty"`
 	OSFamily            OSFamily         `json:"os_family"`
 	Ports               map[Protocol]int `json:"ports"`
 	Capabilities        []Protocol       `json:"capabilities"`
@@ -596,6 +612,9 @@ func (t *Target) Validate() error {
 			return fmt.Errorf("%w: kube_platform belongs to a Kubernetes cluster, which needs kube_api_server", ErrInvalid)
 		}
 	}
+	if err := t.validateCloud(); err != nil {
+		return err
+	}
 	if t.AppUpstream == "" && len(t.AppEndpoints) > 0 {
 		return fmt.Errorf("%w: app_endpoints belong to an application, which needs app_upstream", ErrInvalid)
 	}
@@ -736,7 +755,8 @@ func (t *Target) IsDatabase() bool { return t.Engine != "" }
 
 // Kind is the target's kind for access policies (ADR 0036): a database when
 // it has an engine, an application when it has an upstream, a Kubernetes
-// cluster when it has an API server, else a host.
+// cluster when it has an API server, a cloud account's role when it has a
+// role ARN (ADR 0050), else a host.
 func (t *Target) Kind() string {
 	switch {
 	case t.IsDatabase():
@@ -745,6 +765,8 @@ func (t *Target) Kind() string {
 		return protocol.KindApplication
 	case t.IsKubernetes():
 		return protocol.KindKubernetes
+	case t.IsCloud():
+		return protocol.KindCloud
 	}
 	return protocol.KindHost
 }

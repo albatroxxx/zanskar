@@ -57,12 +57,12 @@ function NavBadge({ load, to, shared }: { load: () => Promise<number>; to: strin
   return <span className="nav-badge" aria-label={`${n} pending`}>{n > 99 ? '99+' : n}</span>
 }
 
-/** Shell is the sidebar layout shared by the user, admin and auditor portals. */
-export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; items: NavItem[] }) {
+/** Shell is the sidebar layout shared by the user, admin, auditor and approver portals. */
+export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit' | 'approvals'; items: NavItem[] }) {
   const { user, logout, hasRole, refresh, mfaEnrolled, secondFactor } = useAuth()
   const [accountOpen, setAccountOpen] = useState(false)
   const nav = useNavigate()
-  const sub = portal === 'user' ? 'access' : portal === 'admin' ? 'admin' : 'audit'
+  const sub = portal === 'user' ? 'access' : portal === 'admin' ? 'admin' : portal
   // The brand goes to the first page of the portal you are in. It asks the
   // server about the session first: a stale one then lands on sign-in (the
   // route guard sends it there) instead of on a page whose data 401s.
@@ -81,6 +81,9 @@ export function Shell({ portal, items }: { portal: 'user' | 'admin' | 'audit'; i
   // Admins review the log inside their own console (Events, Recordings), so
   // only a non-admin auditor gets a switch to the audit portal.
   if (portal !== 'audit' && hasRole('auditor') && !hasRole('admin')) others.push({ to: '/audit', label: 'Audit' })
+  // An approver who cannot connect reaches their queue from the audit portal;
+  // one who can has it in the access portal's nav (ADR 0049).
+  if (portal === 'audit' && hasRole('approver') && !hasRole('admin')) others.push({ to: '/approvals', label: 'Approvals' })
   return (
     <div className="shell">
       {/* The keyboard's first stop, past the sidebar to the page. Out of sight

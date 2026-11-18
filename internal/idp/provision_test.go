@@ -433,3 +433,114 @@ func TestMFAOwners(t *testing.T) {
 		t.Fatalf("owners %v, want only %s", got, want)
 	}
 }
+
+// TestResolveApproverGroups (ADR 0049, 7): a provider that lists approver
+// groups owns the approver role for the accounts that sign in through it.
+// A member of one is an approver from the first sign-in, recorded with the
+// create; a holder in none loses it, and a member gains it, each a
+// user.roles.update naming the provider; a sign-in that changes nothing
+// records nothing. An administrator is left alone.
+func TestResolveApproverGroups(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	p := e.provider(t, "corp", true)
+	p.Config.ApproverGroups = []string{"Approvers", "cn=sec-approvers,ou=groups,dc=corp,dc=example"}
+
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "dana", Groups: []string{"approvers"}})
+	if err != nil || !r.Created || !r.User.HasRole(user.RoleApprover) || !r.User.HasRole(user.RoleUser) {
+		t.Fatalf("first sign-in: %+v %v", r, err)
+	}
+	evs := r.Events("192.0.2.9", p, Identity{ExternalID: "sub-1"})
+	var created map[string]any
+	if len(evs) != 1 || json.Unmarshal(evs[0].Details, &created) != nil || fmt.Sprint(created["roles_granted"]) != "[approver]" {
+		t.Fatalf("the provisioned approver is not on the record: %v %v", actions(evs), created)
+	}
+
+	// Out of the group: the role goes, on the record, naming the provider.
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "dana", Groups: []string{"dev-team"}})
+	if err != nil || !r.ApproverWithdrawn || r.ApproverGranted || r.User.HasRole(user.RoleApprover) || !r.User.HasRole(user.RoleUser) {
+		t.Fatalf("second sign-in: %+v %v", r, err)
+	}
+	evs = r.Events("192.0.2.9", p, Identity{ExternalID: "sub-1"})
+	var d map[string]any
+	if len(evs) != 1 || evs[0].Action != audit.UserRolesUpdate || json.Unmarshal(evs[0].Details, &d) != nil ||
+		fmt.Sprint(d["roles_withdrawn"]) != "[approver]" || d["via"] != "approver_groups" || d["idp"] != p.ID {
+		t.Fatalf("withdrawal event: %v %v", actions(evs), d)
+	}
+
+	// Back in, by the DN-written group this time: granted again.
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "dana", Groups: []string{"sec-approvers"},
+		GroupDNs: []string{"CN=sec-approvers,OU=groups,DC=corp,DC=example"}})
+	if err != nil || !r.ApproverGranted || !r.User.HasRole(user.RoleApprover) {
+		t.Fatalf("third sign-in: %+v %v", r, err)
+	}
+	evs = r.Events("192.0.2.9", p, Identity{ExternalID: "sub-1"})
+	if len(evs) != 1 || evs[0].Action != audit.UserRolesUpdate || !bytes.Contains(evs[0].Details, []byte(`"roles_granted":["approver"]`)) {
+		t.Fatalf("grant event: %v %s", actions(evs), evs[0].Details)
+	}
+	// Nothing changed: nothing recorded.
+	r, _ = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "dana", Groups: []string{"approvers"}})
+	if r.ApproverGranted || r.ApproverWithdrawn || len(r.Events("", p, Identity{})) != 0 {
+		t.Fatalf("an unchanged sign-in: %+v", r)
+	}
+
+	// An administrator holds every role: the groups say nothing to it.
+	p.Config.DefaultRoles = []user.Role{user.RoleAdmin}
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-2", Username: "root", Groups: []string{"approvers"}})
+	if err != nil || !r.Created || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleAdmin {
+		t.Fatalf("admin created: %+v %v", r, err)
+	}
+	if r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-2", Username: "root", Groups: nil}); err != nil || r.ApproverWithdrawn || len(r.User.Roles) != 1 {
+		t.Fatalf("admin out of the group: %+v %v", r, err)
+	}
+}
+
+// TestResolveWithdrawsApproverHeldAlone (review R11): an account holding
+// approver and nothing else (the provider's default role) loses it when it
+// is in none of the approver groups, as one holding user beside it does; the
+// withdrawal is on the record and the account is left with no role.
+func TestResolveWithdrawsApproverHeldAlone(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	p := e.provider(t, "corp", true)
+	p.Config.DefaultRoles = []user.Role{user.RoleApprover}
+	p.Config.ApproverGroups = []string{"approvers"}
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"approvers"}})
+	if err != nil || !r.Created || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleApprover {
+		t.Fatalf("first sign-in: %+v %v", r, err)
+	}
+	// Out of the group with no other role, the account becomes a plain user
+	// rather than one with no portal at all (the owner's call, 2026-11-17).
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"dev-team"}})
+	if err != nil || !r.ApproverWithdrawn || !r.UserGranted || len(r.User.Roles) != 1 || r.User.Roles[0] != user.RoleUser {
+		t.Fatalf("out of the group, approver held alone: %+v %v", r, err)
+	}
+	evs := r.Events("192.0.2.9", p, Identity{ExternalID: "sub-1"})
+	if len(evs) != 1 || evs[0].Action != audit.UserRolesUpdate || !bytes.Contains(evs[0].Details, []byte(`"roles_withdrawn":["approver"]`)) || !bytes.Contains(evs[0].Details, []byte(`"roles_granted":["user"]`)) {
+		t.Fatalf("withdrawal event: %v %s", actions(evs), evs[0].Details)
+	}
+	// Back in the group: approver again, beside the user role it was left with.
+	if r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "fay", Groups: []string{"approvers"}}); err != nil || !r.ApproverGranted || r.UserGranted || len(r.User.Roles) != 2 || !r.User.HasRole(user.RoleApprover) || !r.User.HasRole(user.RoleUser) {
+		t.Fatalf("back in the group: %+v %v", r, err)
+	}
+}
+
+// TestResolveLeavesApproverWhenProviderListsNoGroups: a provider with no
+// approver groups does not own the role; what an administrator set by hand
+// stays through every sign-in.
+func TestResolveLeavesApproverWhenProviderListsNoGroups(t *testing.T) {
+	e := newProvisionEnv(t)
+	ctx := context.Background()
+	p := e.provider(t, "corp", true)
+	r, err := e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "erin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.users.SetRoles(ctx, r.User.ID, []user.Role{user.RoleApprover, user.RoleUser}); err != nil {
+		t.Fatal(err)
+	}
+	r, err = e.pv.Resolve(ctx, p, Identity{ExternalID: "sub-1", Username: "erin", Groups: []string{"dev-team"}})
+	if err != nil || r.ApproverWithdrawn || !r.User.HasRole(user.RoleApprover) || len(r.Events("", p, Identity{})) != 0 {
+		t.Fatalf("a hand-set approver was touched: %+v %v", r, err)
+	}
+}

@@ -10,10 +10,12 @@ export function canConnect(user: Pick<User, 'roles'> | null | undefined): boolea
 /** homeFor is where an account lands after sign-in and when it is turned away
  *  from a portal it may not enter: an administrator on the admin dashboard,
  *  the access portal for an account that can connect, the audit portal for a
- *  review-only account (ADR 0029). */
+ *  review-only account (ADR 0029), the approvals for an account that only
+ *  decides (ADR 0049). */
 export function homeFor(user: Pick<User, 'roles'> | null | undefined): string {
   if (user?.roles.includes('admin')) return '/admin'
   if (canConnect(user)) return '/'
   if (user?.roles.includes('auditor')) return '/audit'
+  if (user?.roles.includes('approver')) return '/approvals'
   return '/'
 }

@@ -72,6 +72,24 @@ func (l *LocalStorage) Open(_ context.Context, uri string) (io.ReadCloser, error
 	return os.Open(abs) // #nosec G304 -- confined to the storage directory above
 }
 
+// Append implements Appender: the file is opened for appending, confined to
+// the storage directory as Open is.
+func (l *LocalStorage) Append(_ context.Context, uri string) (io.WriteCloser, error) {
+	path := strings.TrimPrefix(uri, "file://")
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := filepath.Abs(l.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		return nil, errors.New("recording: uri outside storage directory")
+	}
+	return os.OpenFile(abs, os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- confined to the storage directory above
+}
+
 // Delete implements Storage. It confines removal to the storage directory and
 // treats an already-absent file as success, so a retention sweep is idempotent.
 func (l *LocalStorage) Delete(_ context.Context, uri string) error {
@@ -127,6 +145,20 @@ type sink struct {
 
 func newSink(wc io.WriteCloser, buffer int) sink {
 	return sink{w: bufio.NewWriterSize(wc, buffer), closer: wc, hash: sha256.New()}
+}
+
+// Flush writes what the buffer holds to storage without closing. A recording
+// kept open after its session (a cloud session's, awaiting its activity read,
+// ADR 0050 phase C) is then in storage up to its session's end should the
+// gateway go away before the read; the buffered tail would otherwise be lost
+// with the process. Nothing on a closed recording.
+func (s *sink) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	return s.w.Flush()
 }
 
 // Close finishes the recording and returns its size and SHA-256. A second

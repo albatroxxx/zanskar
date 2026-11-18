@@ -4,7 +4,7 @@ import { api, errorMessage, query } from '../../api/client'
 import { fmtDuration, fmtTime, protocolName } from '../../api/format'
 import { ranges, sinceFor } from '../../api/ranges'
 import { sessionTarget, sessionUser } from '../../api/labels'
-import type { Session } from '../../api/types'
+import type { CloudActivity, Session } from '../../api/types'
 import { recordingGone } from '../../api/states'
 import { Alert, Confirm, Empty, Field, Loading, PageHead, EndReason, StateBadge, TabLink } from '../../components/ui'
 import { useRecordingsPath } from '../audit/paths'
@@ -38,6 +38,25 @@ export function Sessions() {
   const { items, err, setErr, reload } = useList<Session>('/sessions', { open: openOnly ? 'true' : undefined, username: applied || undefined, from: from || undefined })
   const [terminating, setTerminating] = useState<Session | null>(null)
   const [reason, setReason] = useState('')
+  // When a cloud session's command line stops after a terminate asked now: its
+  // credentials run on for up to fifteen minutes (ADR 0050). Fixed when the
+  // dialog opens, not at every render.
+  const [cliBy, setCliBy] = useState('')
+  // A live cloud session's activity, read from CloudTrail on demand (ADR
+  // 0050, phase C): the count of the last read stays beside the button.
+  const [activity, setActivity] = useState<Record<string, string>>({})
+  const [reading, setReading] = useState('')
+  const readActivity = async (s: Session) => {
+    setReading(s.id)
+    try {
+      const r = await api.post<CloudActivity>(`/sessions/${s.id}/activity`)
+      setActivity((a) => ({ ...a, [s.id]: r.events === 0 ? 'none yet' : r.events === 1 ? '1 event' : `${r.events} events` }))
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setReading('')
+    }
+  }
 
   return (
     <>
@@ -90,7 +109,11 @@ export function Sessions() {
                   <td>{protocolName(s.protocol)}</td>
                   <td className="mono muted">{s.client_ip}</td>
                   <td>{fmtDuration(s.started_at, s.ended_at)}</td>
-                  <td><EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} /></td>
+                  <td>
+                    <EndReason state={s.state} reason={s.end_reason} detail={s.end_detail} />
+                    {/* A cloud console sign-in runs on after the session ends (ADR 0050); the time is said. */}
+                    {s.cloud_console_until && <div className="muted">Console until {fmtTime(s.cloud_console_until)}</div>}
+                  </td>
                   <td>
                     {!s.recording_id ? (
                       <span className="muted">—</span>
@@ -104,8 +127,14 @@ export function Sessions() {
                     {s.state === 'live' && (
                       <span className="actions">
                         <TabLink className="btn sm" to={`/audit/shadow/${s.id}?protocol=${s.protocol}&target=${encodeURIComponent(sessionTarget(s))}`} label="Watch" title="Watch live, read-only" />
+                        {s.protocol === 'cloud' && (
+                          <>
+                            <button className="btn sm" disabled={reading === s.id} onClick={() => void readActivity(s)}>Activity</button>
+                            {activity[s.id] && <span className="muted">{activity[s.id]}</span>}
+                          </>
+                        )}
                         {admin && (
-                          <button className="btn sm danger" onClick={() => setTerminating(s)}>
+                          <button className="btn sm danger" onClick={() => { setCliBy(new Date(Date.now() + 15 * 60_000).toISOString()); setTerminating(s) }}>
                             Terminate
                           </button>
                         )}
@@ -123,11 +152,27 @@ export function Sessions() {
           title="Terminate this session?"
           body={
             <div>
-              {/* Terminate ends the session, not the access (live, 2026-11-04: an
-                  administrator expected the portal to go back to Request). */}
-              <p>
-                The session closes now; access stays.
-              </p>
+              {terminating.protocol === 'cloud' ? (
+                // What a cloud session handed out runs on (ADR 0050): the command
+                // line's credentials for up to fifteen minutes, the console to its
+                // end. The two times, nothing else.
+                <dl className="kv">
+                  <dt>Command line</dt>
+                  <dd>by {fmtTime(cliBy)}</dd>
+                  {terminating.cloud_console_until && (
+                    <>
+                      <dt>Console</dt>
+                      <dd>by {fmtTime(terminating.cloud_console_until)}</dd>
+                    </>
+                  )}
+                </dl>
+              ) : (
+                /* Terminate ends the session, not the access (live, 2026-11-04: an
+                   administrator expected the portal to go back to Request). */
+                <p>
+                  The session closes now; access stays.
+                </p>
+              )}
               <Field label="Reason (optional)">
                 <input id="s-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
               </Field>

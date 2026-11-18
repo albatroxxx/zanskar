@@ -29,7 +29,7 @@ import (
 type fakeInventory struct{}
 
 func (fakeInventory) TargetKind(_ context.Context, id string) (string, bool, error) {
-	k, ok := map[string]string{"web-1": protocol.KindHost, "web-2": protocol.KindHost, "orders": protocol.KindDatabase, "wiki": protocol.KindApplication, "k1": protocol.KindKubernetes}[id]
+	k, ok := map[string]string{"web-1": protocol.KindHost, "web-2": protocol.KindHost, "orders": protocol.KindDatabase, "wiki": protocol.KindApplication, "k1": protocol.KindKubernetes, "c1": protocol.KindCloud}[id]
 	return k, ok, nil
 }
 
@@ -238,6 +238,19 @@ func TestPolicyAPIRefusals(t *testing.T) {
 			b["grants"] = []map[string]any{{"kind": "autoscaling", "targets": []map[string]any{{"id": "no-fleet", "protocols": []string{"ssh"}}}}}
 		}, 422, "unknown_target", "no-fleet is not a live autoscaling"},
 		{"a grant id on a new policy", func(b map[string]any) { b["grants"].([]map[string]any)[0]["id"] = "g-123" }, 422, "unknown_grant", "carry no id"},
+		// Approvers (ADR 0049): approval grants only, and a user named must
+		// hold the role.
+		{"approvers on a standing grant", func(b map[string]any) {
+			b["grants"].([]map[string]any)[0]["approvers"] = []map[string]string{{"kind": "group", "id": e.group}}
+		}, 400, "approvers_without_approval", "approval grant"},
+		{"an approver without the role", func(b map[string]any) {
+			g := b["grants"].([]map[string]any)[0]
+			g["access"], g["approvers"] = "approval", []map[string]string{{"kind": "user", "id": e.ben.ID}}
+		}, 422, "not_an_approver", "ben does not hold the approver role"},
+		{"an approver that does not exist", func(b map[string]any) {
+			g := b["grants"].([]map[string]any)[0]
+			g["access"], g["approvers"] = "approval", []map[string]string{{"kind": "user", "id": "nobody"}}
+		}, 422, "invalid_approver", "not found"},
 		// Four eyes was removed in 1.16.0: asked for, it is refused by name,
 		// not dropped in silence.
 		{"four eyes", func(b map[string]any) { b["grants"].([]map[string]any)[0]["require_watcher"] = true }, 400, "four_eyes_removed", "removed in 1.16.0"},
@@ -333,5 +346,44 @@ func TestPolicyAPIKubeScope(t *testing.T) {
 	host["grants"].([]map[string]any)[0]["namespaces"] = []string{"prod"}
 	if code, out := e.do("POST", "/api/v1/access-policies", host); code != http.StatusBadRequest || !strings.Contains(out["message"].(string), "Kubernetes grants only") {
 		t.Fatalf("namespaces on a host grant: %d %v", code, out)
+	}
+}
+
+// TestPolicyAPICloudSwitches (ADR 0050): a cloud grant's console and
+// command-line switches are written and read, filled in when left out, and
+// refused by name on another kind; both off is refused.
+func TestPolicyAPICloudSwitches(t *testing.T) {
+	e := newHandlerEnv(t)
+	body := e.body()
+	body["grants"] = []map[string]any{{
+		"kind": "cloud", "targets": []map[string]any{{"id": "c1", "protocols": []string{"cloud"}}}, "cloud_cli": false,
+	}}
+	code, out := e.do("POST", "/api/v1/access-policies", body)
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %v", code, out)
+	}
+	g := out["grants"].([]any)[0].(map[string]any)
+	if g["cloud_console"] != true || g["cloud_cli"] != false {
+		t.Fatalf("switches: %v", g)
+	}
+	id := out["id"].(string)
+	if code, out := e.do("GET", "/api/v1/access-policies/"+id, nil); code != http.StatusOK || out["grants"].([]any)[0].(map[string]any)["cloud_console"] != true || out["grants"].([]any)[0].(map[string]any)["cloud_cli"] != false {
+		t.Fatalf("get: %d %v", code, out)
+	}
+	host := e.body()
+	host["grants"].([]map[string]any)[0]["cloud_console"] = false
+	if code, out := e.do("POST", "/api/v1/access-policies", host); code != http.StatusBadRequest || !strings.Contains(out["message"].(string), "cloud grants only") {
+		t.Fatalf("a switch on a host grant: %d %v", code, out)
+	}
+	body["grants"].([]map[string]any)[0]["cloud_console"] = false
+	body["name"] = "shut"
+	if code, out := e.do("POST", "/api/v1/access-policies", body); code != http.StatusBadRequest || !strings.Contains(out["message"].(string), "console or the command line on") {
+		t.Fatalf("both off: %d %v", code, out)
+	}
+	// A host grant answers no switches at all.
+	plain := e.body()
+	plain["name"] = "plain-host"
+	if code, out := e.do("POST", "/api/v1/access-policies", plain); code != http.StatusCreated || out["grants"].([]any)[0].(map[string]any)["cloud_console"] != nil {
+		t.Fatalf("a host grant: %d %v", code, out)
 	}
 }

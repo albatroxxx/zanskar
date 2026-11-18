@@ -258,9 +258,9 @@ describe('Target tabs count what they hold', () => {
       </MemoryRouter>,
     )
     expect(await screen.findByRole('tab', { name: 'Hosts (2)' })).toBeDefined()
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (2)', 'Databases (1)', 'Applications', 'Clusters', 'Autoscaling (1)'])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (2)', 'Databases (1)', 'Applications', 'Clusters', 'Cloud', 'Autoscaling (1)'])
     await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search targets by name or IP' }), 'linux')
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (1)', 'Databases', 'Applications', 'Clusters', 'Autoscaling'])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Hosts (1)', 'Databases', 'Applications', 'Clusters', 'Cloud', 'Autoscaling'])
   })
 })
 

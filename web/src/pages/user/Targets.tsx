@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { api, errorMessage } from '../../api/client'
+import { Fragment, useEffect, useState, type FormEvent } from 'react'
+import { ApiError, api, errorMessage } from '../../api/client'
 import { accessDrill, expiresSoon, expiringSoonMs } from '../../api/drilldown'
-import type { AccessRequest, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
+import type { AccessRequest, CloudConsole, ConnectResponse, Page, Protocol, ReachableInstance, ReachableTarget, Session } from '../../api/types'
 import { DatabaseIcon, OSIcon, StateIcon } from '../../components/icons'
 import { Alert, Badge, Empty, Field, Loading, Modal, PageHead, StatTile, Tabs, Tags } from '../../components/ui'
 import { badgesChanged } from '../../components/badges'
@@ -24,11 +24,60 @@ function NotOffered() {
   return <span className="muted" title="not offered" aria-label="not offered">—</span>
 }
 
+/** cloudAccount reads a role's account as "alias · id", or the id alone (ADR 0050). */
+function cloudAccount(t: ReachableTarget): string {
+  const c = t.cloud
+  if (!c) return ''
+  return c.account_alias ? `${c.account_alias} · ${c.account_id}` : c.account_id
+}
+
+/** stillRuns says a remembered cloud session has not reached its end. */
+function stillRuns(res?: ConnectResponse): boolean {
+  return !!res?.cloud && new Date(res.cloud.expires_at).getTime() > Date.now()
+}
+
+/** federationAction is the one address a console sign-in is posted to (ADR
+ *  0038: the console navigates to no address an API returned; the gateway's
+ *  answer is checked against it, never followed). */
+export const federationAction = 'https://signin.aws.amazon.com/federation'
+
+/** openTab opens the tab a console sign-in will land in, on the click itself:
+ *  opened after the gateway has answered, the browser holds it back as a pop-up.
+ *  The tab gets no opener: the AWS page must not reach this one. */
+function openTab(name: string): Window | null {
+  try {
+    const w = window.open('', name) ?? null
+    if (w) w.opener = null
+    return w
+  } catch {
+    return null
+  }
+}
+
+/** postInto submits the sign-in form the gateway built into the tab: a POST,
+ *  so the sign-in token is never a URL the browser keeps (ADR 0050). */
+function postInto(name: string, c: CloudConsole) {
+  const form = document.createElement('form')
+  form.method = 'post'
+  form.action = c.action
+  form.target = name
+  for (const [k, v] of Object.entries(c.fields)) {
+    const i = document.createElement('input')
+    i.type = 'hidden'
+    i.name = k
+    i.value = v
+    form.appendChild(i)
+  }
+  document.body.appendChild(form)
+  form.submit()
+  form.remove()
+}
+
 export function Targets() {
   const [items, setItems] = useState<ReachableTarget[] | null>(null)
   const [err, setErr] = useState('')
   const [notice, setNotice] = useState('')
-  const [tab, setTab] = useState<'static' | 'database' | 'application' | 'cluster' | 'asg'>('static')
+  const [tab, setTab] = useState<'static' | 'database' | 'application' | 'cluster' | 'cloud' | 'asg'>('static')
   const [chooser, setChooser] = useState<{ group: ReachableTarget; protocol: Protocol; instances: ReachableInstance[] | null } | null>(null)
   // Active grants, as a set of "targetId:protocol", so a gated protocol the user
   // already holds a grant for shows Connect rather than Request.
@@ -36,6 +85,9 @@ export function Targets() {
   const [reqModal, setReqModal] = useState<{ target: ReachableTarget; protocol: Protocol } | null>(null)
   // A cluster session's kubeconfig (ADR 0045), shown once.
   const [kubeconfig, setKubeconfig] = useState<{ target: ReachableTarget; res: ConnectResponse } | null>(null)
+  // A cloud role's session (ADR 0050), one per role while this page lives: both doors open on it.
+  const [cloudSessions, setCloudSessions] = useState<Record<string, ConnectResponse>>({})
+  const [cli, setCli] = useState<{ target: ReachableTarget; res: ConnectResponse } | null>(null)
   const [reqForm, setReqForm] = useState({ reason: '', minutes: 60 })
   const [busy, setBusy] = useState('')
   // Live filter over the already-loaded reachable list: matching is instant, no
@@ -123,9 +175,9 @@ export function Targets() {
         // Land on a tab that has something in it. Opening on an empty Hosts
         // tab while Databases holds entries reads as "you have no access"
         // (manual QA finding 2).
-        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.kind === 'cluster' ? 'cluster' : t.engine ? 'database' : 'static')
+        const kind = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.kind === 'cluster' ? 'cluster' : t.kind === 'cloud' ? 'cloud' : t.engine ? 'database' : 'static')
         if (!p.items.some((t) => kind(t) === 'static')) {
-          const first = (['database', 'application', 'cluster', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
+          const first = (['database', 'application', 'cluster', 'cloud', 'asg'] as const).find((k) => p.items.some((t) => kind(t) === k))
           if (first) setTab(first)
         }
       })
@@ -190,16 +242,71 @@ export function Targets() {
       setBusy('')
     }
   }
-  const download = (name: string, text: string) => {
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/yaml' }))
+  const download = (name: string, text: string) => downloadFile(`${name}.kubeconfig`, text, 'application/yaml')
+  const downloadFile = (filename: string, text: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `${name}.kubeconfig`
+    a.download = filename
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.kind === 'cluster' ? 'cluster' : t.engine ? 'database' : 'target')
+  // A cloud session (ADR 0050) has no socket either: it starts here, once per
+  // role while this page lives, and is reused while it runs; the open-sessions
+  // count moves with it. The console asks the gateway for a sign-in form each
+  // time, posted into a tab opened on the click.
+  const cloudSession = async (t: ReachableTarget, fresh = false): Promise<ConnectResponse> => {
+    const have = cloudSessions[t.id]
+    if (!fresh && stillRuns(have)) return have
+    const res = await api.post<ConnectResponse>('/connect', { target_id: t.id, protocol: 'cloud' })
+    setCloudSessions((s) => ({ ...s, [t.id]: res }))
+    void countOpen()
+    return res
+  }
+  const openConsole = async (t: ReachableTarget) => {
+    setErr('')
+    const name = `zanskar-console-${t.id}`
+    const win = openTab(name)
+    if (!win) {
+      // Nothing to land in: no session is started for a sign-in nobody would see.
+      setErr('Pop-up blocked.')
+      return
+    }
+    setBusy('console:' + t.id)
+    try {
+      let res = await cloudSession(t)
+      let form: CloudConsole
+      try {
+        form = await api.post<CloudConsole>(`/cloud/${res.session_id}/console`, {})
+      } catch (e) {
+        // The session this page remembers has ended (a terminate, a policy change): start another, once.
+        if (!(e instanceof ApiError && e.status === 410)) throw e
+        res = await cloudSession(t, true)
+        form = await api.post<CloudConsole>(`/cloud/${res.session_id}/console`, {})
+      }
+      if (form.action !== federationAction) throw new Error('Refused: the sign-in address is not AWS’s.')
+      postInto(name, form)
+    } catch (e) {
+      win.close()
+      setErr(errorMessage(e))
+    } finally {
+      setBusy('')
+    }
+  }
+  const openCli = async (t: ReachableTarget) => {
+    setBusy('cli:' + t.id)
+    setErr('')
+    try {
+      setCli({ target: t, res: await cloudSession(t) })
+    } catch (e) {
+      setErr(errorMessage(e))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const kindOf = (t: ReachableTarget) => (t.kind === 'asg' ? 'asg' : t.kind === 'application' ? 'application' : t.kind === 'cluster' ? 'cluster' : t.kind === 'cloud' ? 'cloud' : t.engine ? 'database' : 'target')
   const term = search.trim().toLowerCase()
   const matches = (t: ReachableTarget) => term === '' || t.name.toLowerCase().includes(term) || (t.private_ip?.toLowerCase().includes(term) ?? false)
   const shown = items?.filter(matches) ?? null
@@ -208,6 +315,11 @@ export function Targets() {
   const applications = shown?.filter((t) => kindOf(t) === 'application') ?? null
   const groups = shown?.filter((t) => kindOf(t) === 'asg') ?? null
   const clusters = shown?.filter((t) => kindOf(t) === 'cluster') ?? null
+  const clouds = shown?.filter((t) => kindOf(t) === 'cloud') ?? null
+  // Roles under their account, accounts and roles each by name.
+  const cloudGroups = clouds
+    ? [...new Set(clouds.map(cloudAccount))].sort((a, b) => a.localeCompare(b)).map((label) => [label, clouds.filter((t) => cloudAccount(t) === label).sort((a, b) => a.name.localeCompare(b.name))] as const)
+    : null
   // Every tab says how many it holds, the same way, once there are any; a
   // search narrows the counts with the lists.
   const counted = (label: string, list: ReachableTarget[] | null) => (list && list.length > 0 ? `${label} (${list.length})` : label)
@@ -313,6 +425,7 @@ export function Targets() {
           { key: 'database', label: counted('Databases', databases) },
           { key: 'application', label: counted('Applications', applications) },
           { key: 'cluster', label: counted('Clusters', clusters) },
+          { key: 'cloud', label: counted('Cloud', clouds) },
           { key: 'asg', label: counted('Autoscaling', groups) },
         ]}
       />
@@ -481,6 +594,59 @@ export function Targets() {
         </div>
       )}
 
+      {tab === 'cloud' && (
+        <div className="card table-wrap">
+          {cloudGroups === null ? (
+            <Loading />
+          ) : cloudGroups.length === 0 ? (
+            <Empty>{emptyFor('cloud roles', 'No cloud roles are assigned to you.')}</Empty>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Role</th>
+                  <th>Tags</th>
+                  <th>Console</th>
+                  <th>Command line</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cloudGroups.map(([label, roles]) => (
+                  <Fragment key={label}>
+                    <tr className="row-group">
+                      <th colSpan={4} scope="colgroup">{label}</th>
+                    </tr>
+                    {roles.map((t) => (
+                      <tr key={t.id}>
+                        <td>
+                          <strong>{t.name}</strong>
+                          {t.cloud?.role_name && t.cloud.role_name !== t.name && <span className="muted mono"> {t.cloud.role_name}</span>}
+                        </td>
+                        <td><Tags tags={t.tags} /></td>
+                        {gated(t, 'cloud') ? (
+                          <td colSpan={2}>
+                            <button className="btn sm" onClick={() => setReqModal({ target: t, protocol: 'cloud' })} title="request access">Request</button>
+                          </td>
+                        ) : (
+                          <>
+                            <td>
+                              <button className="btn sm proto-kube" disabled={!t.cloud?.console || busy === 'console:' + t.id} onClick={() => void openConsole(t)} aria-label={`Open the console of ${t.name}, opens in a new tab`} title={t.cloud?.console ? 'Opens in a new tab' : 'Not in the grant'}>Open console</button>
+                            </td>
+                            <td>
+                              <button className="btn sm proto-kube" disabled={!t.cloud?.cli || busy === 'cli:' + t.id} onClick={() => void openCli(t)} aria-label={`Command line for ${t.name}`} title={t.cloud?.cli ? undefined : 'Not in the grant'}>Command line</button>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {tab === 'asg' && (
         <div className="card table-wrap">
           {groups === null ? (
@@ -571,6 +737,18 @@ export function Targets() {
             <button className="btn" onClick={() => void navigator.clipboard.writeText(kubeconfig.res.kubeconfig ?? '')}>Copy</button>
             <button className="btn" onClick={() => download(kubeconfig.target.name, kubeconfig.res.kubeconfig ?? '')}>Download</button>
             <button className="btn primary" onClick={() => setKubeconfig(null)}>Close</button>
+          </div>
+        </Modal>
+      )}
+
+      {cli && cli.res.cloud && (
+        <Modal title={`Command line · ${cli.target.name}`} onClose={() => setCli(null)} width={720}>
+          <pre className="mono" style={{ whiteSpace: 'pre', overflow: 'auto', maxHeight: '50vh' }}>{cli.res.cloud.profile}</pre>
+          <p className="muted">Until {fmtTime(cli.res.cloud.expires_at)}</p>
+          <div className="actions">
+            <button className="btn" onClick={() => void navigator.clipboard.writeText(cli.res.cloud?.profile ?? '')}>Copy</button>
+            <button className="btn" onClick={() => downloadFile(`${cli.target.name}.awsconfig`, cli.res.cloud?.profile ?? '', 'text/plain')}>Download</button>
+            <button className="btn primary" onClick={() => setCli(null)}>Close</button>
           </div>
         </Modal>
       )}

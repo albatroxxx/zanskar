@@ -451,9 +451,10 @@ func serve(ctx context.Context) error {
 			oidcHandler,
 			scimHandler,
 			&credential.AdminHandler{Vault: vault, Identity: awsIdentity, Audit: auditLog, Log: log},
-			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Groups: groups, Audit: auditLog, Log: log},
+			&target.AdminHandler{Repo: targets, Prober: prober, Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Groups: groups, Identity: awsIdentity, Audit: auditLog, Log: log},
 			&policy.AdminHandler{Repo: policies, Users: users, Inventory: policyInventory{targets: targets, groups: asgRepo}, Revoker: connectHandler, Directory: reviewDirectory{users: users, groups: groups}, Audit: auditLog, Log: log},
 			&access.Handler{Requests: accessReqs, Policies: policies, Targets: targets, ASGs: asgRepo, Revoker: connectHandler, Audit: auditLog, Log: log,
+				Users: users, Groups: groups, Mail: &notify.Direct{Sender: &notify.Sender{Server: notifyRepo.Server}, Server: notifyRepo.Server, Base: cfg.PublicURL},
 				ApproveStepUp: func() bool { return runtime.Bool(settings.KeyApproveStepUp) }, MFAEnrolled: factors.Enrolled},
 			&asg.AdminHandler{Repo: asgRepo, Sync: syncer.SyncGroup, Identity: awsIdentity, Providers: asg.AWSFresh(), Policies: policies, Requests: accessReqs, Live: registry, Revoker: connectHandler, Vault: vault, Audit: auditLog, Log: log},
 			&session.Handler{Repo: sessionRepo, Audit: auditLog, AnchorKey: anchorKey, Registry: registry, Storage: storage, Log: log, IndexOutput: indexOutput},
@@ -593,7 +594,9 @@ func serve(ctx context.Context) error {
 		if _, ok := registry.Get(id); ok {
 			return true
 		}
-		return connectHandler.Starting(id)
+		// A cloud session's recording is held open after its end for the
+		// activity's last read (ADR 0050, phase C): this gateway's still.
+		return connectHandler.Starting(id) || connectHandler.Awaiting(id)
 	}
 	go func() {
 		t := time.NewTicker(5 * time.Minute)

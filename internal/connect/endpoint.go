@@ -61,6 +61,17 @@ type endpoint struct {
 	KubeImpersonate bool
 	KubePlatform    string
 
+	// A cloud account's role (ADR 0050): the account, the role the gateway
+	// assumes for the person with the ExternalId, how long a session may run
+	// and where the console opens.
+	CloudPlatform     string
+	CloudAccountID    string
+	CloudAccountAlias string
+	CloudRoleARN      string
+	CloudExternalID   string
+	CloudMaxMinutes   int
+	CloudRegion       string
+
 	// Exactly one of TargetID or (ASGID, ASGInstanceID) is set.
 	TargetID      string
 	ASGID         string
@@ -101,6 +112,8 @@ func (e *endpoint) policyRef() policy.TargetRef {
 		kind = protocol.KindApplication
 	case e.KubeAPIServer != "":
 		kind = protocol.KindKubernetes
+	case e.CloudRoleARN != "":
+		kind = protocol.KindCloud
 	}
 	return policy.TargetRef{Kind: kind, ID: e.TargetID, ASGID: e.ASGID, Tags: e.Tags}
 }
@@ -109,7 +122,9 @@ func fromTarget(t *target.Target) *endpoint {
 	e := &endpoint{Name: t.Name, Address: t.Address, Ports: t.Ports, Tags: t.Tags, Credentials: t.Credentials,
 		HostKeyTrusted: t.HostKeyStatus == target.HostKeyTrusted, Active: t.Status == "active", TargetID: t.ID, LiveKey: t.ID,
 		Engine: t.Engine, EngineVersion: t.EngineVersion, DatabaseName: t.DatabaseName, TLSMode: t.TLSMode, TLSCA: t.TLSCA, AppUpstream: t.AppUpstream, AppEndpoints: t.AppEndpoints, AppDependencies: t.AppDependencies, AppPrivate: t.AppPrivate,
-		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubeImpersonate: t.Impersonates(), KubePlatform: t.KubePlatform}
+		KubeAPIServer: t.KubeAPIServer, KubeCA: t.KubeCA, KubeImpersonate: t.Impersonates(), KubePlatform: t.KubePlatform,
+		CloudPlatform: t.CloudPlatform, CloudAccountID: t.CloudAccountID, CloudAccountAlias: t.CloudAccountAlias, CloudRoleARN: t.CloudRoleARN,
+		CloudExternalID: t.CloudExternalID, CloudMaxMinutes: t.CloudMaxMinutes, CloudRegion: t.CloudRegion}
 	if t.RetentionDays != nil {
 		e.RetentionDays = *t.RetentionDays
 	}

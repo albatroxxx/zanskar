@@ -112,9 +112,12 @@ var RecordingLifecycle = states.New("recording",
 	Field:   "state",
 	Schemas: []string{"Recording"},
 	Derivation: "`discarded` when `discarded_at` is set, else `purged` when `purged_at` is set, else `finished` when `finished_at` is set, " +
-		"else `lost` when the session has ended, else `recording`. A session carries the same word as `recording_state` (reviewers only).",
+		"else `lost` when the session has ended, else `recording`. A session carries the same word as `recording_state` (reviewers only). " +
+		"A cloud session's recording stays open for 20 minutes after the session's end, while the gateway reads the session's activity from CloudTrail " +
+		"once more (ADR 0050, phase C); it reads `recording` until then, and `lost` only after.",
 	Notes: []string{
 		"A discarded recording is left out of the sessions list by the join; its row stays so the events that name it resolve.",
 		"`lost` is also an audit event (`recording.lost`) and a notification; the row itself keeps `finished_at` null.",
+		"A cloud session's recording the gateway did not come back to (it restarted inside the 20 minutes) is finished by the sweep with the line `activity not read: gateway restarted`.",
 	},
 })

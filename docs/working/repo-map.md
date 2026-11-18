@@ -9,12 +9,16 @@ internal/
   idp                   identity providers: OIDC, LDAP, SCIM; vendor checks live in hack/
   credential, keyring,  vaulted credentials, the sealing keyring, the SSH certificate authority
   sshca, crypto
-  target, asg, cloud    hosts, databases, applications; autoscaling groups; the gateway's own
-                        cloud identity
+  target, asg, cloud    hosts, databases, applications, Kubernetes clusters, cloud account roles
+                        (target/cloud.go, ADR 0050); autoscaling groups; the gateway's own cloud
+                        identity, the EKS token, the per-session role mint (cloud/sts.go) and the
+                        CloudTrail reader for a cloud session's activity (cloud/cloudtrail.go)
   policy, access        access policies and grants; just-in-time requests and approvals
-  connect, ticket,      session start (tickets, preflight, the WebSocket handlers per protocol),
-  session, recording,   the session store and activity, recordings (asciicast, guac), their
-  recstorage            storage (local, S3) and retention
+  connect, ticket,      session start (tickets, preflight, the WebSocket handlers per protocol;
+                        kube.go and cloud.go are the sessions without a socket),
+  session, recording,   the session store and activity, recordings (asciicast, guac; append.go adds
+  recstorage            the line a cloud recording gets when no gateway came back to finish it),
+                        their storage (local, S3) and retention
   gateway/              what carries a session: sshgw, winrmgw, guac (desktops through guacd),
                         dbgw + mysqlrelay (databases), browsergw + apprelay (applications:
                         the isolated browser, the relay with its SOCKS and inspecting proxy),
@@ -34,7 +38,8 @@ internal/
                         the guard tests and hack/gen-lifecycles (docs/lifecycles.md)
 migrations/sqlite,      the numbered pairs, identical names
 migrations/postgres
-web/                    the console (React, Vite, vitest, Playwright in web/e2e)
+web/                    the console (React, Vite, vitest, Playwright in web/e2e); src/pages/admin,
+                        user, audit and approvals are the four portals (approvals: ADR 0049)
 site/                   the public site: guide, releases, latest.json (the update check reads it)
 docs/                   adr/ (every decision), releases/ (every version), api/openapi.yaml,
                         architecture, threat model, roadmap, deploy, lifecycles.md (generated),
@@ -46,7 +51,8 @@ hack/                   smoke.sh, e2e.sh, fakessh, wsclient, keycloak/ and authe
 terraform-provider-zanskar/  the Terraform provider, its own Go module, acceptance tests
 ```
 
-Kinds are derived, never stored: an engine makes a database, an upstream an application,
-anything else a host (`internal/protocol/protocol.go`). The places a kind is derived and the
-places a protocol list is copied are listed in [ADR 0045](../adr/0045-kubernetes-clusters-as-targets.md)'s
-plan; change them together, with a guard test.
+Kinds are derived, never stored: an engine makes a database, an upstream an application, an
+API server a Kubernetes cluster, a role ARN a cloud account's role, anything else a host
+(`internal/protocol/protocol.go`). The places a kind is derived and the places a protocol list is
+copied are listed in [ADR 0045](../adr/0045-kubernetes-clusters-as-targets.md)'s plan and
+[ADR 0050](../adr/0050-cloud-accounts-as-targets.md)'s Surface; change them together, with a guard test.

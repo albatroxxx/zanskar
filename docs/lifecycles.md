@@ -38,7 +38,7 @@ stateDiagram-v2
 
 Field `state` on `Recording`. States: `recording`, `finished`, `lost`, `purged`, `discarded`.
 
-`discarded` when `discarded_at` is set, else `purged` when `purged_at` is set, else `finished` when `finished_at` is set, else `lost` when the session has ended, else `recording`. A session carries the same word as `recording_state` (reviewers only).
+`discarded` when `discarded_at` is set, else `purged` when `purged_at` is set, else `finished` when `finished_at` is set, else `lost` when the session has ended, else `recording`. A session carries the same word as `recording_state` (reviewers only). A cloud session's recording stays open for 20 minutes after the session's end, while the gateway reads the session's activity from CloudTrail once more (ADR 0050, phase C); it reads `recording` until then, and `lost` only after.
 
 ```mermaid
 stateDiagram-v2
@@ -64,6 +64,7 @@ stateDiagram-v2
 
 - A discarded recording is left out of the sessions list by the join; its row stays so the events that name it resolve.
 - `lost` is also an audit event (`recording.lost`) and a notification; the row itself keeps `finished_at` null.
+- A cloud session's recording the gateway did not come back to (it restarted inside the 20 minutes) is finished by the sweep with the line `activity not read: gateway restarted`.
 
 ## Target
 
@@ -224,7 +225,7 @@ stateDiagram-v2
 
 ## Access request
 
-Field `state` on `AccessRequest`. States: `pending`, `approved`, `denied`, `expired`, `revoked`.
+Field `state` on `AccessRequest`. States: `pending`, `approved`, `denied`, `expired`, `revoked`, `cancelled`.
 
 The stored `status`, except that `approved` with `expires_at` at or before now reads `expired`: the sweeper writes `expired` once a minute, and the clock is the truth in between. A grant is active while `state` is `approved`.
 
@@ -233,6 +234,7 @@ stateDiagram-v2
     [*] --> pending
     pending --> approved: access.request.approve
     pending --> denied: access.request.deny
+    pending --> cancelled: access.request.cancel
     pending --> revoked: the target or group is deleted (target.delete)
     approved --> revoked: access.request.revoke
     approved --> revoked: the target or group is deleted (target.delete)
@@ -240,19 +242,22 @@ stateDiagram-v2
     denied --> [*]
     expired --> [*]
     revoked --> [*]
+    cancelled --> [*]
 ```
 
 | From | To | By |
 |---|---|---|
 | pending | approved | access.request.approve |
 | pending | denied | access.request.deny |
+| pending | cancelled | access.request.cancel |
 | pending | revoked | the target or group is deleted (target.delete) |
 | approved | revoked | access.request.revoke |
 | approved | revoked | the target or group is deleted (target.delete) |
 | approved | expired | access.grant.expire |
 
 - Revoke applies to an active grant only; a lapsed one answers 409 with the state named.
-- A pending request never expires on its own and cannot be withdrawn by the requester.
+- A pending request never expires on its own; its requester may cancel it (ADR 0049).
+- Where the grant names approvers they alone approve and deny, never their own request; an administrator revokes any grant, and the requester may end their own, which is a revoke by them (ADR 0049).
 
 ## API token
 

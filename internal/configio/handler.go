@@ -17,6 +17,7 @@ import (
 
 	"github.com/albatroxxx/zanskar/internal/audit"
 	"github.com/albatroxxx/zanskar/internal/auth"
+	"github.com/albatroxxx/zanskar/internal/cloud"
 	"github.com/albatroxxx/zanskar/internal/httpx"
 	"github.com/albatroxxx/zanskar/internal/user"
 )
@@ -55,6 +56,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, r, h.Log, err)
 		return
 	}
+	s.log = h.Log
 	d := s.export()
 	d.ExportedAt = time.Now().UTC().Format(time.RFC3339)
 	var b bytes.Buffer
@@ -210,7 +212,7 @@ func plan(s *state, d Document) []Change {
 		case !exists:
 			c.Action = "create"
 			future.targets[t.Name] = apiTarget{ID: "(new)", Name: t.Name}
-		case yamlOf(s.targetDoc(old)) == yamlOf(withDefaults(t)):
+		case yamlOf(s.targetDoc(old)) == yamlOf(withDefaults(t).keepingExternalID(old)):
 			c.Action = "unchanged"
 		default:
 			c.Action = "update"
@@ -235,7 +237,7 @@ func plan(s *state, d Document) []Change {
 		switch {
 		case !exists:
 			c.Action = "create"
-		case yamlOf(s.policyDoc(old)) == yamlOf(p):
+		case yamlOf(s.policyDoc(old)) == yamlOf(withGrantDefaults(p)):
 			c.Action = "unchanged"
 		default:
 			c.Action = "update"
@@ -243,6 +245,30 @@ func plan(s *state, d Document) []Change {
 		out = append(out, c)
 	}
 	return out
+}
+
+// withGrantDefaults fills what a file may leave out of a grant and an export
+// writes: a cloud grant's two switches, both on (ADR 0050). Without it a file
+// that left them out planned an update on every import, since the gateway
+// stores them said.
+func withGrantDefaults(p Policy) Policy {
+	grants := make([]Grant, len(p.Grants))
+	copy(grants, p.Grants)
+	for i := range grants {
+		if grants[i].Kind != "cloud" {
+			continue
+		}
+		if grants[i].CloudConsole == nil {
+			on := true
+			grants[i].CloudConsole = &on
+		}
+		if grants[i].CloudCLI == nil {
+			on := true
+			grants[i].CloudCLI = &on
+		}
+	}
+	p.Grants = grants
+	return p
 }
 
 func sorted(xs []string) []string {
@@ -270,6 +296,38 @@ func withDefaults(t Target) Target {
 			on := true
 			t.KubeImpersonate = &on
 		}
+	}
+	if t.CloudRoleARN != "" {
+		// A role's row says its platform and its longest session (ADR
+		// 0050); a file may leave the defaults out. The ExternalId has no
+		// default: the gateway mints one when the file carries none. The
+		// gateway derives the rest from the ARN and the region (the account,
+		// the STS host as the address, os other), so a hand-written file
+		// without them is compared as the gateway stores it (review
+		// 2026-11-17, C7).
+		if t.CloudPlatform == "" {
+			t.CloudPlatform = "aws"
+		}
+		if t.CloudMaxMinutes == 0 {
+			t.CloudMaxMinutes = 60
+		}
+		if t.CloudAccountID == "" {
+			t.CloudAccountID = cloud.AccountOf(t.CloudRoleARN)
+		}
+		t.Address = cloud.STSHost(t.CloudRegion)
+		if t.OSFamily == "" {
+			t.OSFamily = "other"
+		}
+	}
+	return t
+}
+
+// keepingExternalID reads an empty cloud_external_id as "keep the gateway's",
+// which is what the write does (the API keeps the stored one when the body's
+// is empty), so the compare does not plan an update for it (C7).
+func (t Target) keepingExternalID(old apiTarget) Target {
+	if t.CloudRoleARN != "" && t.CloudExternalID == "" {
+		t.CloudExternalID = old.CloudExternalID
 	}
 	return t
 }

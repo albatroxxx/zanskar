@@ -92,6 +92,11 @@ func (h *Handler) Recheck(ctx context.Context, userIDs []string) int {
 				withdrawn = append(withdrawn, l)
 			}
 		}
+		// A cloud session holds its console and command-line switches for
+		// its life (ADR 0050): one now off ends it.
+		if !cloudTermsHold(l.Cloud, d) {
+			withdrawn = append(withdrawn, l)
+		}
 	}
 	n := h.revoke(withdrawn)
 	h.logRevoked(n, "access changed")

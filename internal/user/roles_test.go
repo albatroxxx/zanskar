@@ -22,6 +22,9 @@ func TestNormalizeRoles(t *testing.T) {
 		{nil, []Role{}},
 		{[]Role{RoleUser}, []Role{RoleUser}},
 		{[]Role{RoleUser, RoleAuditor, RoleUser}, []Role{RoleAuditor, RoleUser}},
+		// The fourth role (ADR 0049) sits between auditor and user, once.
+		{[]Role{RoleUser, RoleApprover, RoleAuditor, RoleApprover}, []Role{RoleAuditor, RoleApprover, RoleUser}},
+		{[]Role{RoleApprover, RoleAdmin}, []Role{RoleAdmin}},
 		{[]Role{RoleAdmin}, []Role{RoleAdmin}},
 		{[]Role{RoleUser, RoleAdmin, RoleAuditor}, []Role{RoleAdmin}},
 		{[]Role{RoleAuditor, RoleAdmin, RoleAdmin}, []Role{RoleAdmin}},

@@ -138,7 +138,7 @@ export function StateIcon({ state, label }: { state: 'warn' | 'danger' | 'ok' | 
 
 /** TileIcon is a tile's identity mark: decorative (the caption carries the
  *  meaning), muted, one simple shape per kind. */
-export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' | 'shield' | 'phone' | 'moon' | 'admin' | 'k8s' | 'eks' | 'gke' | 'aks' }) {
+export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | 'ban' | 'session' | 'clock' | 'list' | 'server' | 'db' | 'stack' | 'app' | 'shield' | 'phone' | 'moon' | 'admin' | 'k8s' | 'eks' | 'gke' | 'aks' | 'cloud' }) {
   const shape = (() => {
     switch (kind) {
       case 'app':
@@ -297,6 +297,9 @@ export function TileIcon({ kind }: { kind: 'approvals' | 'attention' | 'key' | '
             <rect x="15" y="9" width="6" height="6" rx="1" />
           </>
         )
+      case 'cloud':
+        // A cloud account (ADR 0050): a cloud, plainly.
+        return <path d="M7 18.5a4.25 4.25 0 0 1-.6-8.45A5.75 5.75 0 0 1 17.4 9a4 4 0 0 1 .35 9.5z" />
     }
   })()
   return (

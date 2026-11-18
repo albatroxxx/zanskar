@@ -108,6 +108,14 @@ type grantInput struct {
 	Namespaces   []string `json:"namespaces"`
 	ClusterScope bool     `json:"cluster_scope"`
 	PortForward  bool     `json:"port_forward"`
+	// Approvers decide the requests an approval grant admits (ADR 0049).
+	Approvers []Subject `json:"approvers"`
+	// A cloud grant's switches (ADR 0050); nil takes the default, on, and
+	// Validate refuses them on any other kind. The body refuses unknown
+	// fields, so a carrier forgotten here refused the console's cloud
+	// grants outright (2026-11-17, found by the API test).
+	CloudConsole *bool `json:"cloud_console"`
+	CloudCLI     *bool `json:"cloud_cli"`
 }
 
 func (in *input) apply(p *Policy) {
@@ -122,7 +130,8 @@ func (in *input) apply(p *Policy) {
 			ID: g.ID, Kind: g.Kind, Targets: g.Targets, Tags: g.Tags, Access: g.Access, SignIn: g.SignIn,
 			RequireMFA: g.RequireMFA == nil || *g.RequireMFA, AllowClipboard: g.AllowClipboard, AllowFileTransfer: g.AllowFileTransfer,
 			AllowDevTools: g.AllowDevTools, IdleTimeoutMinutes: g.IdleTimeoutMinutes, MaxSessionMinutes: g.MaxSessionMinutes, TimeWindows: g.TimeWindows, RetentionDays: g.RetentionDays,
-			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward,
+			Namespaces: g.Namespaces, ClusterScope: g.ClusterScope, PortForward: g.PortForward, Approvers: g.Approvers,
+			CloudConsole: g.CloudConsole, CloudCLI: g.CloudCLI,
 		})
 	}
 }
@@ -337,6 +346,29 @@ func (h *AdminHandler) checkWrite(w http.ResponseWriter, r *http.Request, p *Pol
 				return false
 			}
 		}
+		// A user named as an approver must hold the role (ADR 0049); a group
+		// is not inspected, its members are refused at the route instead.
+		for i, g := range p.Grants {
+			for _, a := range g.Approvers {
+				if a.Kind != SubjectUser {
+					continue
+				}
+				u, err := h.Users.GetByID(r.Context(), a.ID)
+				if errors.Is(err, user.ErrNotFound) {
+					httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_approver", "grant "+itoa(i+1)+": approver "+a.ID+" not found")
+					return false
+				}
+				if err != nil {
+					h.fail(w, r, err)
+					return false
+				}
+				if !u.HasRole(user.RoleApprover) && !u.HasRole(user.RoleAdmin) {
+					httpx.WriteError(w, r, http.StatusUnprocessableEntity, "not_an_approver",
+						"grant "+itoa(i+1)+": "+u.Username+" does not hold the approver role")
+					return false
+				}
+			}
+		}
 	}
 	if h.Inventory == nil {
 		return true
@@ -415,6 +447,8 @@ func (h *AdminHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "protocol_not_for_kind", err.Error())
 	case errors.Is(err, ErrUnknownSubject):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_subject", err.Error())
+	case errors.Is(err, ErrApproversWithoutApproval):
+		httpx.WriteError(w, r, http.StatusBadRequest, "approvers_without_approval", strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": "))
 	case errors.Is(err, ErrInvalidInput):
 		httpx.BadRequest(w, r, strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": "))
 	default:

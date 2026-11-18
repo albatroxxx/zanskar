@@ -79,6 +79,10 @@ type Session struct {
 	// RecordingState is the recording's own state (RecordingStateOf), for
 	// reviewers; empty when the session has none they may see.
 	RecordingState RecordingState `json:"recording_state,omitempty"`
+	// CloudConsoleUntil is when a live cloud session's console sign-in runs
+	// out by itself (ADR 0050): what a terminate cannot take back, said. Set
+	// from the registry for a session this gateway holds; absent otherwise.
+	CloudConsoleUntil *time.Time `json:"cloud_console_until,omitempty"`
 
 	recOwnUntil, recFinished *time.Time
 }
@@ -396,15 +400,17 @@ func (r *Repo) RecordingTotals(ctx context.Context) (count, bytes int64, err err
 func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) {
 	var (
 		rec                                        Recording
-		sha                                        sql.NullString
+		sha, protocol                              sql.NullString
 		started, finished, retain, created, purged store.NullTime
 		discarded, sessionEnded                    store.NullTime
 	)
 	// The session's end is read with it: a recording its session ended
-	// without finishing is lost, not still being written (ADR 0047).
-	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT r.id, r.session_id, r.format, r.storage_uri, r.size_bytes, r.sha256, r.started_at, r.finished_at, r.retention_until, r.created_at, r.purged_at, r.discarded_at, s.ended_at
+	// without finishing is lost, not still being written (ADR 0047); a cloud
+	// session's is written for a while after the end (phase C), so the
+	// protocol is read too.
+	err := r.db.QueryRowContext(ctx, r.db.Rebind(`SELECT r.id, r.session_id, r.format, r.storage_uri, r.size_bytes, r.sha256, r.started_at, r.finished_at, r.retention_until, r.created_at, r.purged_at, r.discarded_at, s.ended_at, s.protocol
 		FROM recordings r LEFT JOIN access_sessions s ON s.id = r.session_id WHERE r.id = ?`), id).
-		Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created, &purged, &discarded, &sessionEnded)
+		Scan(&rec.ID, &rec.SessionID, &rec.Format, &rec.StorageURI, &rec.SizeBytes, &sha, &started, &finished, &retain, &created, &purged, &discarded, &sessionEnded, &protocol)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -414,7 +420,7 @@ func (r *Repo) GetRecording(ctx context.Context, id string) (*Recording, error) 
 	rec.SHA256 = sha.String
 	rec.StartedAt, rec.FinishedAt, rec.RetentionUntil, rec.CreatedAt, rec.PurgedAt = started.Time, finished.Ptr(), retain.Ptr(), created.Time, purged.Ptr()
 	rec.DiscardedAt = discarded.Ptr()
-	rec.State = RecordingStateOf(rec.FinishedAt, rec.PurgedAt, rec.DiscardedAt, sessionEnded.Valid)
+	rec.State = RecordingStateOf(rec.FinishedAt, rec.PurgedAt, rec.DiscardedAt, recordingSessionEnded(protocol.String, sessionEnded.Ptr(), time.Now()))
 	return &rec, nil
 }
 
@@ -467,9 +473,55 @@ func scanSession(sc store.Scanner) (*Session, error) {
 	s.State = StateOf(s.EndedAt)
 	if recID.Valid {
 		// Discarded recordings are left out by the join, so none reads so here.
-		s.RecordingState = RecordingStateOf(recFinished.Ptr(), purged.Ptr(), nil, s.EndedAt != nil)
+		s.RecordingState = RecordingStateOf(recFinished.Ptr(), purged.Ptr(), nil, recordingSessionEnded(s.Protocol, s.EndedAt, time.Now()))
 	}
 	return &s, nil
+}
+
+// A cloud session's recording (ADR 0050, phase C) stays open after the
+// session's end: CloudTrail delivers an event up to CloudActivityLateness
+// after it happened, so the gateway reads the session's activity once more
+// then and finishes the recording after. Until CloudActivityGrace has passed
+// the recording is still being written; after it, one still unfinished was
+// left by a gateway that did not come back (it restarted inside the window),
+// and the sweep finishes it.
+const (
+	CloudActivityLateness = 15 * time.Minute
+	CloudActivityGrace    = CloudActivityLateness + 5*time.Minute
+)
+
+// recordingSessionEnded is whether a recording's session has ended as far
+// as the recording's state goes: for a cloud session, only once its
+// activity read is due, since the recording is written until then.
+func recordingSessionEnded(protocol string, endedAt *time.Time, now time.Time) bool {
+	if endedAt == nil {
+		return false
+	}
+	return protocol != "cloud" || !now.Before(endedAt.Add(CloudActivityGrace))
+}
+
+// AwaitingRecordings lists the recordings of cloud sessions that ended before
+// cutoff and are still unfinished and unpurged: left open for the activity
+// read (ADR 0050, phase C) by a gateway that did not come back to them. Each
+// carries its id, session and storage address.
+func (r *Repo) AwaitingRecordings(ctx context.Context, cutoff time.Time) ([]*Recording, error) {
+	rows, err := r.db.QueryContext(ctx, r.db.Rebind(`SELECT r.id, r.session_id, r.storage_uri FROM recordings r
+		JOIN access_sessions s ON s.id = r.session_id
+		WHERE s.protocol = 'cloud' AND s.ended_at IS NOT NULL AND s.ended_at < ? AND r.finished_at IS NULL AND r.purged_at IS NULL
+		ORDER BY s.ended_at, r.id`), store.TimeArg(cutoff))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Recording
+	for rows.Next() {
+		rec := &Recording{Format: "asciicast"}
+		if err := rows.Scan(&rec.ID, &rec.SessionID, &rec.StorageURI); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
 }
 
 func nullStr(s string) any {

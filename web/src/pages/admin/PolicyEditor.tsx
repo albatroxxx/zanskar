@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { protocolName } from '../../api/format'
-import { api, errorMessage } from '../../api/client'
+import { ApiError, api, errorMessage } from '../../api/client'
 import type { AutoscalingGroup, Group, Policy, PolicyGrant, PolicySubject, Protocol, Target, TargetKind, TimeWindow, User } from '../../api/types'
 import { canConnect } from '../../auth/home'
 import { PickList } from '../../components/PickList'
@@ -9,7 +9,7 @@ import { TagEditor } from '../../components/TagEditor'
 import { tagSuggestions } from '../../components/tags'
 import { Alert, Confirm, Field, Loading, PageHead, RemoveButton } from '../../components/ui'
 import { useList } from './lib'
-import { chipsFor, filesMove, fromDraft, grantSummary, kindOf, kinds, newGrant, switchKind, toDraft, unfound, type GrantDraft } from './policyModel'
+import { chipsFor, filesMove, fromDraft, grantSummary, isImplicit, kindOf, kinds, newGrant, switchKind, toDraft, unfound, type GrantDraft } from './policyModel'
 
 const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -56,6 +56,9 @@ export function PolicyEditor() {
   const [grants, setGrants] = useState<GrantDraft[]>([toDraft(newGrant())])
   const [open, setOpen] = useState<number[]>([0])
   const [err, setErr] = useState('')
+  // The gateway's word on a named approver who may not approve (ADR 0049):
+  // shown beside the approvers of each approval grant, where the fix is.
+  const [approverErr, setApproverErr] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -102,11 +105,16 @@ export function PolicyEditor() {
     const subjects: PolicySubject[] = [...groupIDs.map((gid) => ({ kind: 'group' as const, id: gid })), ...userIDs.map((uid) => ({ kind: 'user' as const, id: uid }))]
     const body = { name: name.trim(), description, enabled, subjects, grants: out }
     setBusy(true)
+    setApproverErr('')
     try {
       if (id) await api.put(`/access-policies/${id}`, body)
       else await api.post('/access-policies', body)
       nav('/admin/policies')
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'not_an_approver') {
+        setApproverErr(errorMessage(e))
+        setOpen((o) => [...new Set([...o, ...grants.flatMap((d, i) => (d.access === 'approval' && (d.approverGroups.length || d.approverUsers.length) ? [i] : []))])])
+      }
       fail(errorMessage(e))
     } finally {
       setBusy(false)
@@ -168,6 +176,9 @@ export function PolicyEditor() {
           }}
           targets={targets.items ?? []}
           asgs={asgs.items ?? []}
+          groups={groups.items ?? []}
+          users={users.items ?? []}
+          approverErr={approverErr}
           nameOf={nameOf}
         />
       ))}
@@ -206,8 +217,12 @@ export function PolicyEditor() {
   )
 }
 
+/** canApprove mirrors the gateway's rule (ADR 0049): a user named as an
+ *  approver holds the approver role, or is an administrator. */
+const canApprove = (u: User) => u.roles.includes('approver') || u.roles.includes('admin')
+
 /** GrantCard edits one grant: kind, what it covers, and its conditions. */
-function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, onDuplicate, targets, asgs, nameOf }: {
+function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, onDuplicate, targets, asgs, groups, users, approverErr, nameOf }: {
   index: number
   draft: GrantDraft
   open: boolean
@@ -217,11 +232,30 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
   onDuplicate: () => void
   targets: Target[]
   asgs: AutoscalingGroup[]
+  groups: Group[]
+  users: User[]
+  approverErr?: string
   nameOf: (id: string) => string
 }) {
   const p = `pe-g${index}`
   const up = (patch: Partial<GrantDraft>) => onChange({ ...d, ...patch })
-  const implicit = d.kind === 'database' || d.kind === 'application'
+  // The people an approval grant may name (ADR 0049): approvers and
+  // administrators. One named that no longer qualifies stays listed, marked,
+  // so it can be seen and removed rather than refused in silence; so does a
+  // user or group the grant names that no longer exists (the gateway refuses
+  // to save it, and the row is where it is unticked).
+  const ghost = (id: string) => ({ id, label: id.slice(0, 8), detail: 'not found', inactive: true })
+  const approverOptions = [
+    ...users.filter(canApprove).map(personOption),
+    ...users.filter((u) => !canApprove(u) && d.approverUsers.includes(u.id)).map((u) => ({ ...personOption(u), detail: 'not an approver', inactive: true })),
+    ...d.approverUsers.filter((uid) => !users.some((u) => u.id === uid)).map(ghost),
+  ]
+  const approverGroupOptions = [
+    ...groups.map((g) => ({ id: g.id, label: g.name, detail: g.member_count !== undefined ? `${g.member_count} ${g.member_count === 1 ? 'member' : 'members'}` : undefined })),
+    ...d.approverGroups.filter((gid) => !groups.some((g) => g.id === gid)).map(ghost),
+  ]
+  const namesApprovers = d.approverGroups.length > 0 || d.approverUsers.length > 0
+  const implicit = isImplicit(d.kind)
   const ofKind = useMemo(
     () => (d.kind === 'autoscaling' ? [] : targets.filter((t) => kindOf(t) === d.kind)),
     [targets, d.kind],
@@ -229,7 +263,7 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
   const listed = d.kind === 'autoscaling'
     ? asgs.map((g) => ({ id: g.id, label: g.name, detail: g.status === 'disabled' ? `${g.os_family} · disabled` : g.os_family, inactive: g.status === 'disabled' }))
     : ofKind.map((t) => {
-      const what = d.kind === 'database' ? t.engine : d.kind === 'host' ? t.os_family : undefined
+      const what = d.kind === 'database' ? t.engine : d.kind === 'host' ? t.os_family : d.kind === 'cloud' ? (t.cloud_account_alias || t.cloud_account_id) : undefined
       return { id: t.id, label: t.name, detail: t.status === 'disabled' ? [what, 'disabled'].filter(Boolean).join(' · ') : what, inactive: t.status === 'disabled' }
     })
   // A target the grant names that the lists do not hold (retired since, or
@@ -372,7 +406,23 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                   ))}
                 </div>
               </Field>
-              {d.kind !== 'application' && (
+              {d.access === 'approval' && (
+                <Field label="Approvers" hint="None: an administrator decides">
+                  <>
+                    <PickList label="approver groups" idPrefix={`${p}-ag`} selected={d.approverGroups}
+                      onToggle={(gid) => up({ approverGroups: toggle(d.approverGroups, gid) })}
+                      onSelect={(ids, on) => up({ approverGroups: pickMany(d.approverGroups, ids, on) })}
+                      options={approverGroupOptions} />
+                    <PickList label="approvers" idPrefix={`${p}-au`} selected={d.approverUsers}
+                      onToggle={(uid) => up({ approverUsers: toggle(d.approverUsers, uid) })}
+                      onSelect={(ids, on) => up({ approverUsers: pickMany(d.approverUsers, ids, on) })}
+                      options={approverOptions} empty="No approvers yet" />
+                    {approverErr && namesApprovers && <Alert tone="danger">{approverErr}</Alert>}
+                  </>
+                </Field>
+              )}
+              {/* An application and a cloud role hold no credential: the person's own sign-in, or the gateway's role. */}
+              {d.kind !== 'application' && d.kind !== 'cloud' && (
                 <Field label="Sign in with">
                   <div className="seg" role="radiogroup" aria-label={`Grant ${index + 1} sign-in`}>
                     {(['target', 'own'] as const).map((s) => (
@@ -388,7 +438,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
             <div className="actions">
               {([
                 ['require_mfa', 'Authenticator'],
-                ['allow_clipboard', 'Clipboard'],
+                // A cloud session's clipboard is the person's own browser's: the gateway mediates no stream (ADR 0050).
+                ...(d.kind !== 'cloud' ? ([['allow_clipboard', 'Clipboard']] as const) : []),
                 // Files move over SSH and RDP only: a database client or an
                 // application's browser has no way to carry them (2026-11-02).
                 ...(filesMove(d.kind) ? ([['allow_file_transfer', 'File transfer (SSH, RDP)']] as const) : []),
@@ -396,6 +447,8 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
                 ...(d.kind === 'application' ? ([['allow_devtools', 'Developer tools']] as const) : []),
                 // A cluster's scope beyond its namespaces (ADR 0045): cluster-wide resources, port-forward.
                 ...(d.kind === 'kubernetes' ? ([['cluster_scope', 'Cluster scope'], ['port_forward', 'Port-forward']] as const) : []),
+                // A cloud grant's two doors (ADR 0050), both open unless closed here.
+                ...(d.kind === 'cloud' ? ([['cloud_console', 'Console'], ['cloud_cli', 'Command line']] as const) : []),
               ] as const).map(([k, label]) => (
                 <span key={k} className="field inline">
                   <input id={`${p}-${k}`} type="checkbox" checked={d[k]} onChange={(e) => up({ [k]: e.target.checked } as Partial<GrantDraft>)} />
@@ -409,8 +462,9 @@ function GrantCard({ index, draft: d, open, onToggleOpen, onChange, onRemove, on
               </Field>
             )}
             <div className="form-grid">
-              <Field label="Idle (minutes)"><input id={`${p}-idle`} inputMode="numeric" value={d.idle} onChange={(e) => up({ idle: e.target.value })} /></Field>
-              <Field label="Maximum (minutes)"><input id={`${p}-max`} inputMode="numeric" value={d.max} onChange={(e) => up({ max: e.target.value })} placeholder="No limit" /></Field>
+              {/* A cloud session has no idle (ADR 0050): the gateway sees no request stream; its length is the maximum. */}
+              {d.kind !== 'cloud' && <Field label="Idle (minutes)"><input id={`${p}-idle`} inputMode="numeric" value={d.idle} onChange={(e) => up({ idle: e.target.value })} /></Field>}
+              <Field label={d.kind === 'cloud' ? 'Session (minutes)' : 'Maximum (minutes)'}><input id={`${p}-max`} inputMode="numeric" value={d.max} onChange={(e) => up({ max: e.target.value })} placeholder={d.kind === 'cloud' ? "Role's max" : 'No limit'} /></Field>
               <Field label="Recording retention (days)" info="Target first, then this grant, then global."><input id={`${p}-retention`} inputMode="numeric" value={d.retention} onChange={(e) => up({ retention: e.target.value })} placeholder="Global" /></Field>
             </div>
             <Field label="Time windows" hint="None = always">

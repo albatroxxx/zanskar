@@ -10,7 +10,7 @@ Approved 2026-09-20. Durations are estimates for a small team; the order matters
 | 3. Autoscaling | 6 weeks | AWS ASG enrollment with cross-account IAM role, healthy pool tracking, failover modal, EC2 Instance Connect credential mode, HA gateway deployment, Helm chart, SIEM export | done |
 | 3.5 Protocol expansion | done | SSH file transfer over SFTP (ADR 0016); managed/PaaS database access via an ephemeral per-session client container (ADR 0017) | done |
 | 3.6 PIM | done | Just-in-time, approved, time-bounded access (ADR 0018) — pulled into v1.0 | done |
-| 4. Enterprise | ongoing | Access reviews and delegated/multi-step approvers, live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
+| 4. Enterprise | ongoing | Access reviews (done, ADR 0040) and delegated approvers (done, ADR 0049, 2026-11-16); multi-step approvers; cloud accounts as targets, temporary elevated access to AWS (ADR 0050: a role the gateway assumes and the session's activity from CloudTrail, phases B and C, done 2026-11-17; Identity Center mode, phase D, deferred); live session shadowing and termination, credential rotation, SAML and SCIM, GCP managed instance groups, Azure scale sets, WebAuthn | |
 
 ## The next twelve months (October 2026 to September 2027)
 
@@ -31,8 +31,12 @@ What the project intends to do, in order. Dates are targets; the order matters m
    authenticator code and audited line by line ([ADR 0027](adr/0027-restricted-console-cli.md),
    [command reference](console-cli.md)).
 4. **Phase 4, enterprise** (2027). The cross-pod control channel that makes high availability and
-   the Helm chart supported; SAML and SCIM; WebAuthn (built as a second factor, ADR 0028); access reviews and delegated or multi-step
-   approvers; GCP managed instance groups and Azure scale sets.
+   the Helm chart supported; SAML and SCIM; WebAuthn (built as a second factor, ADR 0028); access reviews (ADR 0040) and
+   delegated approvers (ADR 0049, 16 November 2026) are done and multi-step approvers remain; cloud
+   accounts as targets, temporary elevated access to an AWS account through a role the gateway
+   assumes, with what the person did read back from CloudTrail (ADR 0050, phases B and C, 17
+   November 2026); its Identity Center mode (phase D) waits for an organization that asks; GCP
+   managed instance groups and Azure scale sets.
 
 What the project does **not** intend to do in that time:
 

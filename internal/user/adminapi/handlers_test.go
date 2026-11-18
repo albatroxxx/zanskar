@@ -139,6 +139,31 @@ func TestCreateUserWithPassword(t *testing.T) {
 	}
 }
 
+// TestApproverIsPrivileged (ADR 0049): granting the approver role is on the
+// record as granting admin or auditor is, at create and at a roles change.
+func TestApproverIsPrivileged(t *testing.T) {
+	e := newEnv(t)
+	r := e.do("POST", "/api/v1/users", map[string]any{"username": "fay", "display_name": "Fay", "roles": []string{"user", "approver"}})
+	if r.code != 201 || fmt.Sprint(r.body["roles"]) != "[approver user]" {
+		t.Fatalf("create: %d %v", r.code, r.body)
+	}
+	events, _, _ := e.audit.List(context.Background(), audit.Filter{Action: "user.create"})
+	if len(events) != 1 || !bytes.Contains(events[0].Details, []byte(`"roles_granted":["approver"]`)) {
+		t.Fatalf("expected user.create with the approver granted, got %s", events[0].Details)
+	}
+	id := r.body["id"].(string)
+	if r := e.do("PUT", "/api/v1/users/"+id+"/roles", map[string]any{"roles": []string{"user"}}); r.code != 200 {
+		t.Fatalf("drop: %d %v", r.code, r.body)
+	}
+	if r := e.do("PUT", "/api/v1/users/"+id+"/roles", map[string]any{"roles": []string{"approver", "user"}}); r.code != 200 {
+		t.Fatalf("grant again: %d %v", r.code, r.body)
+	}
+	events, _, _ = e.audit.List(context.Background(), audit.Filter{Action: "user.roles.update"})
+	if len(events) != 2 || !bytes.Contains(events[0].Details, []byte(`"roles_granted":["approver"]`)) || bytes.Contains(events[1].Details, []byte("roles_granted")) {
+		t.Fatalf("roles update events: %d, newest %s", len(events), events[0].Details)
+	}
+}
+
 func TestRolesAndLastAdmin(t *testing.T) {
 	e := newEnv(t)
 	if r := e.do("PUT", "/api/v1/users/"+e.admin.ID+"/roles", map[string]any{"roles": []string{"user"}}); r.code != 409 || r.body["code"] != "last_admin" {

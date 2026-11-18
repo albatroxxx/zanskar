@@ -95,6 +95,25 @@ describe('Adding a provider', () => {
     expect(document.body.textContent).not.toContain('s3cr3t')
   })
 
+  // ADR 0049: the groups whose members hold the approver role are rows like
+  // the mapping's, sent only when there are any, blanks dropped.
+  it('sends the approver groups as a list, and none when the rows are blank', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
+    const { user, form } = await openAdd()
+    await user.type(within(form).getByLabelText('Name'), 'Okta')
+    await user.type(within(form).getByLabelText('Issuer URL'), 'https://login.example.com')
+    await user.type(within(form).getByLabelText('Client ID'), 'zanskar')
+    await user.click(within(form).getByRole('button', { name: 'Add approver group' }))
+    await user.type(within(form).getByLabelText('Approver group 1'), ' approvers ')
+    await user.click(within(form).getByRole('button', { name: 'Add approver group' }))
+    await user.type(within(form).getByLabelText('Approver group 2'), 'cn=approvers,ou=groups,dc=corp')
+    await user.click(within(form).getByRole('button', { name: 'Add approver group' }))
+    await user.click(within(form).getByRole('button', { name: 'Remove approver group approvers' }))
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0][1]).toMatchObject({ config: { approver_groups: ['cn=approvers,ou=groups,dc=corp'] } })
+  })
+
   it('refuses a half-filled mapping before sending, and drops a removed one', async () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({} as never)
     const { user, form } = await openAdd()

@@ -839,6 +839,8 @@ tr[aria-current="true"] td { background: var(--accent-soft); }
 .rollup-reach { display: block; font-size: 0.84rem; }
 .access-flags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
 .policy-detail > td, .row-detail > td { background: var(--bg-sunken); padding: 10px 14px 14px; }
+/* A header row over the rows it groups (a cloud account over its roles, ADR 0050). */
+.row-group > th { background: var(--bg-sunken); font-size: 0.78rem; font-weight: 600; color: var(--fg-muted); text-align: left; padding: 6px 14px; }
 .policy-who-full { margin: 0 0 8px; font-size: 0.88rem; }
 .grants-table { width: 100%; font-size: 0.86rem; }
 .grants-table th { font-size: 0.72rem; }
