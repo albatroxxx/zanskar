@@ -63,9 +63,9 @@ and update the status of the old one.
 | [0042](0042-four-eyes-sessions.md) | Four eyes: a session waits until a second person watches it | Accepted |
 | [0043](0043-configuration-as-a-file.md) | The configuration as a file: exported by name, imported through the API | Accepted |
 | [0044](0044-api-tokens-and-terraform-provider.md) | API tokens for automation, and a Terraform provider over them | Accepted |
-| [0045](0045-kubernetes-clusters-as-targets.md) | Kubernetes clusters as targets: access through the gateway, as the person, every request on the record | Accepted, in progress |
+| [0045](0045-kubernetes-clusters-as-targets.md) | Kubernetes clusters as targets: access through the gateway, as the person, every request on the record | Accepted, built in 2.0.0 |
 | [0046](0046-deleting-a-user-keeps-their-history.md) | Deleting a user keeps their history: sessions and recording views carry who the person was | Accepted |
 | [0047](0047-lifecycles-declared-once.md) | A lifecycle is declared once, and the state a person sees is the state the gateway computed | Accepted 2026-11-10 |
 | [0048](0048-fabric.md) | Fabric: what Zanskar reaches through a control plane, where the members come and go | Accepted 2026-11-12 |
-| [0049](0049-approvers.md) | Approvers: a fourth role, and a grant that names who decides | Accepted 2026-11-16 |
-| [0050](0050-cloud-accounts-as-targets.md) | Cloud accounts as targets: temporary elevated access to AWS, approved, bounded, on the record | Accepted 2026-11-16 |
+| [0049](0049-approvers.md) | Approvers: a fourth role, and a grant that names who decides | Accepted 2026-11-16, built in 3.0.0 |
+| [0050](0050-cloud-accounts-as-targets.md) | Cloud accounts as targets: temporary elevated access to AWS, approved, bounded, on the record | Accepted 2026-11-16, phases B and C built in 3.0.0 |
